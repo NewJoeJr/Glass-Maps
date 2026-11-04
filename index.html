@@ -1,266 +1,617 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Glasses Maps</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>GlassNav — Turn-by-Turn for Glasses</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-:root{
-  color-scheme:dark;
-  --ac:#9be8c8;                       /* soft mint accent */
-  --txt:#fff;--mut:rgba(255,255,255,.62);
-  --glass:rgba(255,255,255,.09);--glass2:rgba(255,255,255,.15);
-  --edge:rgba(255,255,255,.18);
-  --r:26px;
-}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-/* Pure black = transparent on a see-through lens, so keep the page black and let glass float on it */
-html,body{margin:0;height:100%;background:#000;color:var(--txt);
-  font:500 20px/1.25 -apple-system,"SF Pro Display","Segoe UI",Roboto,system-ui,sans-serif;
-  letter-spacing:.1px;overflow:hidden}
-#app{height:100%;display:flex;flex-direction:column;padding:12px;gap:10px}
-.hide{display:none!important}
-
-.glass{
-  background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(255,255,255,.05));
-  border:1px solid var(--edge);border-radius:var(--r);
-  -webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 8px 28px rgba(0,0,0,.45);
-}
-
-input,button{font:inherit;color:var(--txt);border:1px solid var(--edge);border-radius:999px;padding:12px 18px;
-  background:var(--glass);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.18);transition:background .15s,transform .1s,box-shadow .15s}
-input{width:100%;background:rgba(255,255,255,.07)}
-input::placeholder{color:var(--mut)}
-button:active{transform:scale(.97);background:var(--glass2)}
-button:focus,input:focus{outline:none;border-color:#fff;
-  box-shadow:0 0 0 2px rgba(255,255,255,.9),0 0 18px rgba(255,255,255,.35)}
-button.pri{background:rgba(255,255,255,.92);color:#000;border-color:transparent;font-weight:650}
-button.pri:active{background:#fff}
-
-#setup{padding:14px}
-.row{display:flex;gap:10px}.row>*{flex:1}
-#results{display:flex;flex-direction:column;gap:8px;overflow:auto;max-height:46vh}
-#results button{text-align:left;font-size:17px;border-radius:20px}
-
-#statusrow{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 18px;border-radius:999px}
-#status{color:var(--mut);font-size:15px;line-height:1.2;flex:1}
-#gpsretry{font-size:14px;padding:8px 14px;flex:none}
-
-#nav{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
-#top{display:flex;align-items:center;gap:14px;padding:12px 18px 12px 12px}
-#arrow{width:76px;height:76px;flex:none;filter:drop-shadow(0 0 10px rgba(255,255,255,.35))}
-#dist{font-size:46px;font-weight:700;color:var(--txt);line-height:1;letter-spacing:-.5px}
-#instr{font-size:20px;color:var(--mut);margin-top:2px}
-#map{flex:1;width:100%;min-height:0;border-radius:var(--r);border:1px solid var(--edge);
-  background:radial-gradient(120% 90% at 50% 100%,rgba(255,255,255,.10),rgba(255,255,255,.02));
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.16)}
-#foot{display:flex;justify-content:space-between;align-items:center;color:var(--mut);font-size:17px;
-  padding:8px 8px 8px 20px;border-radius:999px}
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    background: #000; color: #fff; overflow: hidden;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  #map { position: fixed; inset: 0; background: #000; z-index: 1; }
+  .leaflet-container { background: #000; }
+  .leaflet-tile-pane { filter: brightness(.75) saturate(.85); }
+  .glass {
+    background: rgba(10, 22, 30, .55);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    backdrop-filter: blur(14px) saturate(150%);
+    border: 1px solid rgba(120, 235, 255, .35);
+    border-radius: 18px;
+    box-shadow: 0 0 24px rgba(0, 229, 255, .12), inset 0 1px 0 rgba(255,255,255,.15);
+  }
+  #turnCard {
+    position: fixed; top: 10px; left: 10px; right: 10px; z-index: 10;
+    display: none; align-items: center; gap: 14px; padding: 14px 16px;
+  }
+  #turnCard.show { display: flex; }
+  #arrowBox { flex: 0 0 auto; width: 92px; height: 92px; display: flex; align-items: center; justify-content: center; }
+  #arrowSvg { width: 88px; height: 88px; transition: transform .35s ease; filter: drop-shadow(0 0 8px rgba(83,233,255,.8)); }
+  #turnText { flex: 1 1 auto; min-width: 0; }
+  #maneuverDist { font-size: clamp(30px, 8vmin, 46px); font-weight: 800; line-height: 1; color: #53e9ff; }
+  #instruction { font-size: clamp(20px, 5.4vmin, 30px); font-weight: 700; line-height: 1.15; margin-top: 4px; }
+  #nextStreet { font-size: clamp(14px, 3.6vmin, 19px); color: rgba(255,255,255,.75); margin-top: 3px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #statusBar {
+    position: fixed; left: 10px; right: 10px; bottom: 58px; z-index: 10;
+    display: none; justify-content: space-between; align-items: center;
+    padding: 10px 16px; gap: 8px;
+  }
+  #statusBar.show { display: flex; }
+  .stat { text-align: center; min-width: 0; }
+  .stat .v { font-size: clamp(19px, 5vmin, 27px); font-weight: 800; }
+  .stat .l { font-size: clamp(10px, 2.6vmin, 13px); letter-spacing: .12em; color: rgba(255,255,255,.6); text-transform: uppercase; }
+  #curStreet {
+    position: fixed; left: 10px; right: 10px; bottom: 118px; z-index: 9; display: none;
+    text-align: center; font-size: clamp(14px, 3.8vmin, 19px); color: rgba(255,255,255,.85);
+    text-shadow: 0 1px 6px #000;
+  }
+  #curStreet.show { display: block; }
+  #controls { position: fixed; left: 10px; right: 10px; bottom: 10px; z-index: 11; display: none; gap: 8px; }
+  #controls.show { display: flex; }
+  .chip {
+    flex: 1; padding: 11px 4px; text-align: center; cursor: pointer; user-select: none;
+    font-size: clamp(14px, 3.8vmin, 18px); font-weight: 700; color: #fff; border-radius: 14px;
+  }
+  .chip.on { border-color: #5dff9d; color: #5dff9d; }
+  .chip.danger { border-color: rgba(255,110,110,.6); color: #ff8f8f; }
+  #banner {
+    position: fixed; left: 50%; top: 42%; transform: translate(-50%,-50%); z-index: 30;
+    display: none; padding: 20px 26px; text-align: center; max-width: 86%;
+    font-size: clamp(20px, 5.6vmin, 30px); font-weight: 800;
+  }
+  #banner.show { display: block; }
+  #searchScreen {
+    position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
+    padding: 22px 16px 16px; gap: 12px;
+    background: radial-gradient(120% 90% at 50% 0%, rgba(0,60,80,.55), rgba(0,0,0,.88) 70%);
+  }
+  #searchScreen.hide { display: none; }
+  #appTitle { font-size: clamp(30px, 8vmin, 44px); font-weight: 800; letter-spacing: .01em; }
+  #appTitle span { color: #53e9ff; }
+  #appSub { color: rgba(255,255,255,.7); font-size: clamp(14px, 3.8vmin, 18px); margin-top: -6px; }
+  #searchRow { display: flex; gap: 8px; }
+  #destInput {
+    flex: 1; min-width: 0; padding: 15px 16px; font-size: clamp(17px, 4.6vmin, 22px); color: #fff;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(120,235,255,.45); border-radius: 14px; outline: none;
+  }
+  #destInput::placeholder { color: rgba(255,255,255,.45); }
+  #goBtn {
+    padding: 0 22px; font-size: clamp(17px, 4.6vmin, 22px); font-weight: 800; color: #03222b;
+    background: #53e9ff; border: none; border-radius: 14px; cursor: pointer;
+  }
+  #results { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  .result {
+    text-align: left; padding: 14px 16px; cursor: pointer; color: #fff; width: 100%;
+    font-size: clamp(15px, 4.2vmin, 20px); font-weight: 600; border-radius: 14px;
+  }
+  .result small { display: block; font-weight: 400; color: rgba(255,255,255,.6); margin-top: 2px;
+    font-size: clamp(12px, 3.2vmin, 15px); }
+  #searchMsg { color: #ffd166; font-size: clamp(14px, 3.8vmin, 18px); min-height: 1.2em; }
+  #demoNote { margin-top: auto; color: rgba(255,255,255,.55); font-size: clamp(12px, 3.4vmin, 15px); line-height: 1.45; }
 </style>
 </head>
 <body>
-<div id="app">
-  <div id="setup" class="glass">
-    <input id="q" placeholder="Where to?" autocomplete="off">
-    <div class="row" style="margin-top:8px">
-      <button id="mode" type="button">Walk</button>
-      <button id="go" class="pri" type="button">Search</button>
-    </div>
-    <div id="results" style="margin-top:8px"></div>
+
+<div id="map"></div>
+
+<div id="turnCard" class="glass">
+  <div id="arrowBox">
+    <svg id="arrowSvg" viewBox="0 0 100 100">
+      <g id="arrowMain">
+        <path d="M50 6 L84 46 L60 46 L60 94 L40 94 L40 46 L16 46 Z" fill="#53e9ff"/>
+      </g>
+      <g id="arrowRound" style="display:none">
+        <path d="M50 12 a38 38 0 1 1 -27 11" fill="none" stroke="#53e9ff" stroke-width="11"/>
+        <path d="M14 6 L40 16 L20 34 Z" fill="#53e9ff"/>
+      </g>
+      <g id="arrowFlag" style="display:none">
+        <path d="M34 94 L34 10" stroke="#5dff9d" stroke-width="7"/>
+        <path d="M34 12 L82 24 L34 40 Z" fill="#5dff9d"/>
+      </g>
+    </svg>
   </div>
-  <div id="statusrow" class="glass">
-    <div id="status">Waiting for GPS…</div>
-    <button id="gpsretry" type="button">Retry GPS</button>
-  </div>
-  <div id="nav" class="hide">
-    <div id="top" class="glass">
-      <svg id="arrow" viewBox="-50 -50 100 100"><g id="ag"><path d="M0-40 L28 0 H10 V38 H-10 V0 H-28Z" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></g></svg>
-      <div><div id="dist">–</div><div id="instr"></div></div>
-    </div>
-    <canvas id="map"></canvas>
-    <div id="foot" class="glass"><span id="rem"></span><button id="stop" type="button">End</button></div>
+  <div id="turnText">
+    <div id="maneuverDist">—</div>
+    <div id="instruction">Finding your location…</div>
+    <div id="nextStreet"></div>
   </div>
 </div>
+
+<div id="curStreet"></div>
+
+<div id="statusBar" class="glass">
+  <div class="stat"><div class="v" id="statEta">—</div><div class="l">ETA</div></div>
+  <div class="stat"><div class="v" id="statLeft">—</div><div class="l">Left</div></div>
+  <div class="stat"><div class="v" id="statSpeed">—</div><div class="l">MPH</div></div>
+</div>
+
+<div id="controls">
+  <div class="chip glass on" id="voiceBtn">🔊 Voice</div>
+  <div class="chip glass" id="demoBtn">▶ Demo</div>
+  <div class="chip glass danger" id="endBtn">✕ End</div>
+</div>
+
+<div id="banner" class="glass"></div>
+
+<div id="searchScreen">
+  <div>
+    <div id="appTitle">Glass<span>Nav</span></div>
+    <div id="appSub">Turn-by-turn, right in your glasses</div>
+  </div>
+  <div id="searchRow">
+    <input id="destInput" type="text" placeholder="Where to? Address or place…" autocomplete="off">
+    <button id="goBtn">Go</button>
+  </div>
+  <div id="searchMsg"></div>
+  <div id="results"></div>
+  <div id="demoNote">
+    Tip: tap a result to start navigating from your current location.
+    No GPS fix yet? Start a route anyway and hit <b>▶ Demo</b> to watch it drive the route for you —
+    handy for testing on the glasses before you get in the car.
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const $=id=>document.getElementById(id);
-const R=6371000,rad=d=>d*Math.PI/180;
-const imperial=(navigator.language||'').startsWith('en-US');
-const MODES=[{k:'foot',label:'Walk',url:'routed-foot/route/v1/foot',scale:.6},
-             {k:'car',label:'Drive',url:'routed-car/route/v1/driving',scale:.12},
-             {k:'bike',label:'Bike',url:'routed-bike/route/v1/bike',scale:.3}];
-let mi=0,pos=null,last=null,heading=0,route=null,steps=[],si=0,lastCheck=0,dest=null,arrived=false,lastSpoken=-1,watchId=null;
+"use strict";
+const $ = id => document.getElementById(id);
 
-function setStatus(t){$('status').textContent=t;}
+/* ============ state ============ */
+let map = null, routeLine = null, posMarker = null, destMarker = null;
+let navigating = false;
+let dest = null;                 // {lat, lon, label}
+let steps = [];                  // {text, kind, deg, loc:[lat,lon]}
+let stepIdx = 0;
+let routeCoords = [];            // [[lat,lon],...]
+let routeDuration = 0;           // seconds (whole route, from OSRM)
+let currentPos = null;           // {lat, lon, speedMph, heading}
+let watchId = null;
+let voiceOn = true;
+let announcedFar = -1;           // stepIdx that already got its advance announcement
+let offRouteCount = 0, rerouting = false;
+let wakeLock = null;
+let lastPos = null, lastPosTime = 0;
 
-function dist(a,b){const dl=rad(b[1]-a[1]),dn=rad(b[0]-a[0]);
-  const h=Math.sin(dl/2)**2+Math.cos(rad(a[1]))*Math.cos(rad(b[1]))*Math.sin(dn/2)**2;
-  return 2*R*Math.asin(Math.sqrt(h));}
-function bearing(a,b){const y=Math.sin(rad(b[0]-a[0]))*Math.cos(rad(b[1])),
-  x=Math.cos(rad(a[1]))*Math.sin(rad(b[1]))-Math.sin(rad(a[1]))*Math.cos(rad(b[1]))*Math.cos(rad(b[0]-a[0]));
-  return (Math.atan2(y,x)*180/Math.PI+360)%360;}
-function toXY(p,o){return[(p[0]-o[0])*Math.cos(rad(o[1]))*111320,(p[1]-o[1])*110540];}
-function fmtD(m){
-  if(imperial){const ft=m*3.281;return ft<900?Math.round(ft/10)*10+' ft':(m/1609.34).toFixed(1)+' mi';}
-  return m<1000?Math.round(m/10)*10+' m':(m/1000).toFixed(1)+' km';}
-function offRoute(){
-  const pts=route.geometry.coordinates;let best=Infinity;
-  for(let i=0;i<pts.length-1;i++){
-    const a=toXY(pts[i],pos),b=toXY(pts[i+1],pos),dx=b[0]-a[0],dy=b[1]-a[1];
-    const l2=dx*dx+dy*dy;let t=l2?-(a[0]*dx+a[1]*dy)/l2:0;t=Math.max(0,Math.min(1,t));
-    best=Math.min(best,Math.hypot(a[0]+t*dx,a[1]+t*dy));}
-  return best;}
-
-function text(s){
-  const m=s.maneuver,t=m.type,mod=m.modifier||'',n=s.name?' onto '+s.name:'';
-  if(t==='arrive')return 'Arrive at destination';
-  if(t==='depart')return 'Head '+(s.name?'on '+s.name:'out');
-  if(t==='roundabout'||t==='rotary')return 'Roundabout, exit '+(m.exit||'')+n;
-  if(mod==='uturn')return 'Make a U-turn'+n;
-  if(t==='continue'||mod==='straight')return 'Continue straight'+(s.name?' on '+s.name:'');
-  return 'Turn '+mod+n;}
-function angle(s){
-  const m=s.maneuver;
-  return ({'sharp left':-135,'left':-90,'slight left':-45,'straight':0,'slight right':45,'right':90,'sharp right':135,'uturn':180})[m.modifier]??0;}
-
-/* ---------- GPS ---------- */
-function gpsError(e){
-  if(e&&e.code===1)setStatus('Location denied. Allow it in your browser/site settings (and Meta AI app location), then tap Retry GPS.');
-  else if(e&&e.code===3)setStatus('GPS timed out. Go near a window or outside, then tap Retry GPS.');
-  else setStatus('GPS unavailable ('+((e&&e.message)||'unknown')+'). Tap Retry GPS.');
+/* ============ geo helpers ============ */
+const R = 6371000, toRad = d => d * Math.PI / 180;
+function haversine(a, b) {
+  const dLat = toRad(b[0] - a[0]), dLon = toRad(b[1] - a[1]);
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
 }
-function startGPS(){
-  if(!navigator.geolocation){setStatus('This browser has no location support.');return;}
-  if(!window.isSecureContext){setStatus('Location needs HTTPS. Open the https:// link.');return;}
-  setStatus('Waiting for GPS…');
-  if(watchId!==null){try{navigator.geolocation.clearWatch(watchId);}catch(e){}watchId=null;}
-  // Quick coarse fix first (wifi/cell), then refine with high accuracy.
-  navigator.geolocation.getCurrentPosition(onPos,gpsError,
-    {enableHighAccuracy:false,maximumAge:120000,timeout:15000});
-  watchId=navigator.geolocation.watchPosition(onPos,
-    e=>{if(!pos)gpsError(e);},
-    {enableHighAccuracy:true,maximumAge:2000,timeout:60000});
+function distToSegment(p, a, b) {
+  const dx = b[1] - a[1], dy = b[0] - a[0], L2 = dx * dx + dy * dy;
+  let t = L2 ? ((p[1] - a[1]) * dx + (p[0] - a[0]) * dy) / L2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return haversine(p, [a[0] + t * dy, a[1] + t * dx]);
 }
-function getFixOnce(){
-  return new Promise((res,rej)=>{
-    if(!navigator.geolocation)return rej({message:'no geolocation'});
-    navigator.geolocation.getCurrentPosition(p=>{onPos(p);res();},rej,
-      {enableHighAccuracy:false,maximumAge:120000,timeout:15000});
+function distToRoute(p) {
+  let best = Infinity;
+  for (let i = 0; i < routeCoords.length - 1; i += 2) {
+    const d = distToSegment(p, routeCoords[i], routeCoords[i + 1]);
+    if (d < best) best = d;
+  }
+  return best;
+}
+function fmtDist(m) {
+  const ft = m * 3.28084;
+  if (ft < 1000) return Math.max(10, Math.round(ft / 10) * 10) + " ft";
+  return (m / 1609.34).toFixed(1) + " mi";
+}
+function fmtClock(date) {
+  let h = date.getHours(); const ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
+  return h + ":" + String(date.getMinutes()).padStart(2, "0") + " " + ap;
+}
+
+/* ============ speech ============ */
+function speak(text) {
+  if (!voiceOn || !("speechSynthesis" in window)) return;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.rate = 1.05;
+    speechSynthesis.speak(u);
+  } catch (e) { /* no TTS on this browser — visual only */ }
+}
+
+/* ============ banner ============ */
+let bannerTimer = null;
+function showBanner(text, ms) {
+  const b = $("banner");
+  b.textContent = text;
+  b.classList.add("show");
+  clearTimeout(bannerTimer);
+  if (ms) bannerTimer = setTimeout(() => b.classList.remove("show"), ms);
+}
+function hideBanner() { $("banner").classList.remove("show"); }
+
+/* ============ map ============ */
+function initMap() {
+  if (map || typeof L === "undefined") return;
+  map = L.map("map", { zoomControl: false, attributionControl: false });
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 19 }).addTo(map);
+  map.setView([42.86, -73.79], 13); // Clifton Park area until GPS fixes
+}
+
+/* ============ search (Nominatim) ============ */
+async function doSearch() {
+  const q = $("destInput").value.trim();
+  const box = $("results"); box.innerHTML = "";
+  if (!q) { $("searchMsg").textContent = "Type a destination first."; return; }
+  $("searchMsg").textContent = "Searching…";
+  try {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=6&addressdetails=1&q=" + encodeURIComponent(q);
+    const r = await fetch(url, { headers: { "Accept": "application/json" } });
+    const data = await r.json();
+    if (!data.length) { $("searchMsg").textContent = "No matches — try a fuller address."; return; }
+    $("searchMsg").textContent = "";
+    data.forEach(item => {
+      const btn = document.createElement("button");
+      btn.className = "result glass";
+      const main = item.display_name.split(",")[0];
+      const sub = item.display_name.split(",").slice(1, 4).join(",");
+      btn.innerHTML = "";
+      btn.appendChild(document.createTextNode(main));
+      const sm = document.createElement("small");
+      sm.textContent = sub;
+      btn.appendChild(sm);
+      btn.onclick = () => startNavigation({ lat: parseFloat(item.lat), lon: parseFloat(item.lon), label: item.display_name });
+      box.appendChild(btn);
+    });
+  } catch (e) {
+    $("searchMsg").textContent = "Search failed — check your connection and try again.";
+  }
+}
+$("goBtn").onclick = doSearch;
+$("destInput").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+
+/* ============ routing (OSRM) ============ */
+function dirWord(mod) {
+  switch (mod) {
+    case "left": return "left";
+    case "right": return "right";
+    case "sharp left": return "sharp left";
+    case "sharp right": return "sharp right";
+    case "slight left": return "slightly left";
+    case "slight right": return "slightly right";
+    case "uturn": return "a U-turn";
+    default: return "straight";
+  }
+}
+function degFor(mod) {
+  switch (mod) {
+    case "slight right": return 45;
+    case "right": return 90;
+    case "sharp right": return 135;
+    case "uturn": return 180;
+    case "sharp left": return 225;
+    case "left": return 270;
+    case "slight left": return 315;
+    default: return 0;
+  }
+}
+function instructionFor(step) {
+  const m = step.maneuver, name = (step.name || "").trim();
+  const onto = name ? " onto " + name : "";
+  const on = name ? " on " + name : "";
+  let kind = "arrow", deg = degFor(m.modifier);
+  let text;
+  switch (m.type) {
+    case "depart":
+      text = name ? "Head out on " + name : "Head out"; break;
+    case "turn":
+      text = m.modifier === "uturn" ? "Make a U-turn" + onto
+           : m.modifier === "straight" || !m.modifier ? "Continue straight" + onto
+           : "Turn " + dirWord(m.modifier) + onto; break;
+    case "continue":
+    case "new name":
+      text = "Continue" + onto; break;
+    case "merge":
+      text = "Merge" + onto; break;
+    case "on ramp":
+      text = "Take the ramp" + onto; deg = degFor(m.modifier || "slight right"); break;
+    case "off ramp":
+      text = "Take the exit" + (m.exit ? " " + m.exit : "") + onto; deg = degFor(m.modifier || "slight right"); break;
+    case "fork":
+      text = "Keep " + (m.modifier === "left" ? "left" : "right") + " at the fork" + onto; break;
+    case "end of road":
+      text = "At the end of the road, turn " + dirWord(m.modifier) + onto; break;
+    case "roundabout":
+    case "rotary":
+      kind = "round";
+      text = "At the roundabout, take exit " + (m.exit || "") + onto; break;
+    case "roundabout turn":
+      text = "At the roundabout, turn " + dirWord(m.modifier) + onto; break;
+    case "arrive":
+      kind = "flag"; text = "You have arrived"; break;
+    default:
+      text = "Continue" + onto;
+  }
+  return { text: text, kind: kind, deg: deg, loc: [m.location[1], m.location[0]], name: name };
+}
+
+async function fetchRoute(from, to) {
+  const url = "https://router.project-osrm.org/route/v1/driving/" +
+    from.lon + "," + from.lat + ";" + to.lon + "," + to.lat +
+    "?steps=true&geometries=geojson&overview=full&annotations=false";
+  const r = await fetch(url);
+  const data = await r.json();
+  if (!data.routes || !data.routes.length) throw new Error("no route");
+  const route = data.routes[0];
+  routeCoords = route.geometry.coordinates.map(c => [c[1], c[0]]);
+  routeDuration = route.duration;
+  steps = [];
+  route.legs.forEach(leg => leg.steps.forEach(s => steps.push(instructionFor(s))));
+  if (!steps.length || steps[steps.length - 1].kind !== "flag")
+    steps.push({ text: "You have arrived", kind: "flag", deg: 0, loc: [to.lat, to.lon], name: "" });
+  stepIdx = 0; announcedFar = -1; offRouteCount = 0;
+  drawRoute();
+}
+function drawRoute() {
+  if (!map) return;
+  if (routeLine) map.removeLayer(routeLine);
+  if (destMarker) map.removeLayer(destMarker);
+  routeLine = L.polyline(routeCoords, { color: "#53e9ff", weight: 7, opacity: .95 }).addTo(map);
+  destMarker = L.marker([dest.lat, dest.lon]).addTo(map);
+  map.fitBounds(routeLine.getBounds(), { padding: [30, 30] });
+}
+
+/* ============ navigation flow ============ */
+async function startNavigation(destination) {
+  dest = destination;
+  initMap();
+  $("searchScreen").classList.add("hide");
+  $("turnCard").classList.add("show");
+  $("statusBar").classList.add("show");
+  $("curStreet").classList.add("show");
+  $("controls").classList.add("show");
+  $("instruction").textContent = "Finding your location…";
+  $("maneuverDist").textContent = "—";
+  setTimeout(() => map && map.invalidateSize(), 60);
+  navigating = true;
+  requestWakeLock();
+  startWatch();
+
+  const from = await getPositionOnce();
+  if (!from) {
+    // No GPS (desktop / glasses at home): park a fake start SW of the destination
+    // so Demo mode can still drive the whole route for testing.
+    currentPos = { lat: dest.lat - 0.018, lon: dest.lon - 0.018, speedMph: null };
+    showBanner("No GPS fix — hit ▶ Demo to test-drive the route", 5000);
+  } else {
+    currentPos = from;
+  }
+  try {
+    await fetchRoute(currentPos, dest);
+    renderHud();
+    if (steps.length) speak(steps[0].text);
+  } catch (e) {
+    showBanner("Couldn't build a route — check connection", 5000);
+  }
+}
+
+function getPositionOnce() {
+  return new Promise(res => {
+    if (!("geolocation" in navigator)) return res(null);
+    navigator.geolocation.getCurrentPosition(
+      p => res({ lat: p.coords.latitude, lon: p.coords.longitude, speedMph: null }),
+      () => res(null),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
+    );
   });
 }
-function onPos(p){
-  const c=[p.coords.longitude,p.coords.latitude];
-  if(p.coords.heading!=null&&!isNaN(p.coords.heading)&&p.coords.speed>1)heading=p.coords.heading;
-  else if(last&&dist(last,c)>4)heading=bearing(last,c);
-  if(!last||dist(last,c)>4)last=c;
-  pos=c;
-  if(route)update();
-  else{const t=$('status').textContent;if(t.startsWith('Waiting')||t.startsWith('Location')||t.startsWith('GPS'))setStatus('GPS ready');}
+
+function startWatch() {
+  if (watchId !== null || !("geolocation" in navigator)) return;
+  watchId = navigator.geolocation.watchPosition(onGps, () => {}, {
+    enableHighAccuracy: true, timeout: 15000, maximumAge: 2000
+  });
+}
+function stopWatch() {
+  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
 }
 
-/* ---------- search & routing ---------- */
-async function search(){
-  const q=$('q').value.trim();if(!q)return;
-  $('results').innerHTML='';setStatus('Searching…');
-  let u='https://nominatim.openstreetmap.org/search?format=json&limit=5&q='+encodeURIComponent(q);
-  if(pos)u+='&viewbox='+[pos[0]-.5,pos[1]+.5,pos[0]+.5,pos[1]-.5].join(',');
-  try{
-    const r=await (await fetch(u)).json();
-    if(!r.length){setStatus('No results');return;}
-    setStatus(pos?'GPS ready':'Waiting for GPS…');
-    r.forEach(x=>{const b=document.createElement('button');b.type='button';
-      b.textContent=x.display_name.split(',').slice(0,3).join(',');
-      b.onclick=()=>start([+x.lon,+x.lat]);$('results').appendChild(b);});
-    $('results').firstChild.focus();
-  }catch(e){setStatus('Search failed');}
+function endNavigation() {
+  navigating = false;
+  stopWatch(); stopDemo();
+  if (speechSynthesis) try { speechSynthesis.cancel(); } catch (e) {}
+  $("turnCard").classList.remove("show");
+  $("statusBar").classList.remove("show");
+  $("curStreet").classList.remove("show");
+  $("controls").classList.remove("show");
+  hideBanner();
+  $("searchScreen").classList.remove("hide");
+  $("searchMsg").textContent = "";
 }
 
-async function start(d){
-  dest=d;
-  if(!pos){
-    setStatus('Getting your location…');
-    try{await getFixOnce();}
-    catch(e){gpsError(e);return;}
+/* ============ position updates ============ */
+function onGps(p) {
+  if (demoOn) return; // demo drives position while active
+  const now = Date.now();
+  let speedMph = null;
+  if (p.coords.speed != null && p.coords.speed >= 0) {
+    speedMph = p.coords.speed * 2.23694;
+  } else if (lastPos && now > lastPosTime) {
+    const d = haversine([lastPos.lat, lastPos.lon], [p.coords.latitude, p.coords.longitude]);
+    speedMph = (d / ((now - lastPosTime) / 1000)) * 2.23694;
+    if (speedMph > 160) speedMph = null;
   }
-  setStatus('Routing…');
-  const m=MODES[mi];
-  const u='https://routing.openstreetmap.de/'+m.url+'/'+pos.join(',')+';'+d.join(',')+'?steps=true&overview=full&geometries=geojson';
-  try{
-    const r=await (await fetch(u)).json();
-    if(!r.routes||!r.routes.length){setStatus('No route found');return;}
-    route=r.routes[0];steps=route.legs[0].steps;si=0;arrived=false;lastSpoken=-1;
-    $('setup').classList.add('hide');$('statusrow').classList.add('hide');$('nav').classList.remove('hide');
-    try{navigator.wakeLock&&navigator.wakeLock.request('screen');}catch(e){}
-    update();
-  }catch(e){setStatus('Routing failed');}
+  lastPos = { lat: p.coords.latitude, lon: p.coords.longitude };
+  lastPosTime = now;
+  onPos({ lat: p.coords.latitude, lon: p.coords.longitude, speedMph: speedMph });
 }
 
-function update(){
-  if(!route||!pos)return;
-  const nxt=steps[si+1];
-  if(nxt){
-    const d=dist(pos,nxt.maneuver.location);
-    if(d<(MODES[mi].k==='car'?35:20)){
-      if(nxt.maneuver.type==='arrive'){arrived=true;}
-      else{si++;}
+function onPos(pos) {
+  currentPos = pos;
+  if (!navigating || !steps.length) { moveMarker(); return; }
+  moveMarker();
+
+  const here = [pos.lat, pos.lon];
+  const target = steps[stepIdx];
+  const dNext = haversine(here, target.loc);
+
+  // advance when close to the maneuver point
+  if (dNext < 28 && stepIdx < steps.length - 1) {
+    stepIdx++;
+    announcedFar = -1;
+    speak(steps[stepIdx].text);
+  }
+
+  // advance announcement once per step ("In 1,000 ft, turn right onto…")
+  if (announcedFar !== stepIdx && dNext < 400 && dNext >= 28 && steps[stepIdx].kind !== "flag") {
+    announcedFar = stepIdx;
+    speak("In " + fmtDist(dNext) + ", " + lowerFirst(steps[stepIdx].text));
+  }
+
+  // arrived
+  if (steps[stepIdx].kind === "flag" && dNext < 35) {
+    showBanner("🎉 You have arrived");
+    speak("You have arrived at your destination");
+    steps = steps.slice(0, stepIdx + 1); // stop further updates from re-firing
+    renderHud(0);
+    return;
+  }
+
+  // off-route check → reroute
+  if (routeCoords.length > 1 && stepIdx > 0) {
+    if (distToRoute(here) > 60) {
+      offRouteCount++;
+      if (offRouteCount >= 3 && !rerouting) doReroute();
+    } else offRouteCount = 0;
+  }
+
+  renderHud(dNext);
+}
+
+function lowerFirst(s) { return s.charAt(0).toLowerCase() + s.slice(1); }
+
+async function doReroute() {
+  rerouting = true;
+  showBanner("Rerouting…");
+  try {
+    await fetchRoute(currentPos, dest);
+    hideBanner();
+    if (steps.length) speak(steps[Math.min(1, steps.length - 1)].text);
+  } catch (e) {
+    showBanner("Rerouting failed — check connection", 4000);
+  }
+  rerouting = false;
+  offRouteCount = 0;
+}
+
+function moveMarker() {
+  if (!map || !currentPos) return;
+  const ll = [currentPos.lat, currentPos.lon];
+  if (!posMarker) {
+    posMarker = L.circleMarker(ll, { radius: 10, color: "#fff", weight: 3, fillColor: "#53e9ff", fillOpacity: 1 }).addTo(map);
+    map.setView(ll, 16);
+  } else {
+    posMarker.setLatLng(ll);
+    if (navigating) map.panTo(ll, { animate: true });
+  }
+}
+
+/* ============ HUD rendering ============ */
+function renderHud(dNextOverride) {
+  if (!steps.length || !currentPos) return;
+  const step = steps[stepIdx];
+  const here = [currentPos.lat, currentPos.lon];
+  const dNext = dNextOverride != null ? dNextOverride : haversine(here, step.loc);
+
+  // arrow
+  $("arrowMain").style.display = step.kind === "arrow" ? "" : "none";
+  $("arrowRound").style.display = step.kind === "round" ? "" : "none";
+  $("arrowFlag").style.display = step.kind === "flag" ? "" : "none";
+  $("arrowSvg").style.transform = step.kind === "arrow" ? "rotate(" + step.deg + "deg)" : "rotate(0deg)";
+
+  $("maneuverDist").textContent = step.kind === "flag" ? "★" : fmtDist(dNext);
+  $("instruction").textContent = step.text;
+  // the street you'll be on after this step
+  const after = steps[stepIdx + 1];
+  $("nextStreet").textContent = step.name ? "on " + step.name : "";
+
+  // remaining distance = to next maneuver + all later maneuver hops
+  let remain = dNext;
+  for (let i = stepIdx; i < steps.length - 1; i++) remain += haversine(steps[i].loc, steps[i + 1].loc);
+  $("statLeft").textContent = fmtDist(remain);
+
+  // ETA: scale remaining distance against the original route duration
+  let etaTxt = "—";
+  if (routeDuration > 0) {
+    let total = 0;
+    for (let i = 0; i < steps.length - 1; i++) total += haversine(steps[i].loc, steps[i + 1].loc);
+    if (total > 0) etaTxt = fmtClock(new Date(Date.now() + routeDuration * (remain / total) * 1000));
+  }
+  $("statEta").textContent = etaTxt;
+  $("statSpeed").textContent = currentPos.speedMph != null ? Math.round(currentPos.speedMph) : "—";
+
+  // current street = the road this step travels on (previous maneuver's target road)
+  const cur = stepIdx > 0 ? steps[stepIdx].name : step.name;
+  $("curStreet").textContent = cur ? cur : "";
+}
+
+/* ============ demo mode (test-drive the route) ============ */
+let demoOn = false, demoTimer = null, demoDist = 0, cumDist = [];
+function buildCumDist() {
+  cumDist = [0];
+  for (let i = 1; i < routeCoords.length; i++)
+    cumDist.push(cumDist[i - 1] + haversine(routeCoords[i - 1], routeCoords[i]));
+}
+function demoPointAt(d) {
+  let i = 1;
+  while (i < cumDist.length - 1 && cumDist[i] < d) i++;
+  const segLen = cumDist[i] - cumDist[i - 1] || 1;
+  const t = (d - cumDist[i - 1]) / segLen;
+  const a = routeCoords[i - 1], b = routeCoords[i];
+  return { lat: a[0] + (b[0] - a[0]) * t, lon: a[1] + (b[1] - a[1]) * t, speedMph: 27 };
+}
+function startDemo() {
+  if (!routeCoords.length) { showBanner("Start a route first, then hit Demo", 3500); return; }
+  buildCumDist();
+  demoOn = true; demoDist = 0;
+  $("demoBtn").classList.add("on");
+  showBanner("Demo drive started", 2000);
+  const total = cumDist[cumDist.length - 1];
+  demoTimer = setInterval(() => {
+    demoDist += 12 * 0.4; // ~27 mph, tick every 400 ms
+    if (demoDist >= total) { onPos(demoPointAt(total)); stopDemo(); return; }
+    onPos(demoPointAt(demoDist));
+  }, 400);
+}
+function stopDemo() {
+  demoOn = false;
+  if (demoTimer) clearInterval(demoTimer);
+  demoTimer = null;
+  $("demoBtn").classList.remove("on");
+}
+$("demoBtn").onclick = () => { demoOn ? stopDemo() : startDemo(); };
+
+/* ============ controls ============ */
+$("voiceBtn").onclick = () => {
+  voiceOn = !voiceOn;
+  $("voiceBtn").classList.toggle("on", voiceOn);
+  $("voiceBtn").textContent = voiceOn ? "🔊 Voice" : "🔇 Muted";
+  if (!voiceOn && "speechSynthesis" in window) try { speechSynthesis.cancel(); } catch (e) {}
+};
+$("endBtn").onclick = endNavigation;
+
+/* ============ wake lock (keep the glasses display awake) ============ */
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && navigating) requestWakeLock();
+      });
     }
-  }
-  const n=steps[si+1]||steps[si];
-  const d=dist(pos,n.maneuver.location);
-  let remain=d;for(let j=si+1;j<steps.length;j++)remain+=steps[j].distance;
-  const eta=Math.max(1,Math.round(route.duration*remain/route.distance/60));
-  const msg=arrived?'You have arrived':text(n);
-  $('dist').textContent=arrived?'✓':fmtD(d);
-  $('instr').textContent=msg;
-  $('ag').setAttribute('transform','rotate('+(arrived?0:angle(n))+')');
-  $('rem').textContent=fmtD(remain)+' · '+eta+' min';
-  if(lastSpoken!==si&&'speechSynthesis' in window){
-    lastSpoken=si;try{speechSynthesis.cancel();speechSynthesis.speak(new SpeechSynthesisUtterance(msg));}catch(e){}}
-  const now=Date.now();
-  if(!arrived&&now-lastCheck>6000){lastCheck=now;if(offRoute()>70)start(dest);}
-  draw();
+  } catch (e) { /* not supported here — fine */ }
 }
 
-function draw(){
-  const c=$('map');if(!c.clientWidth||!pos)return;
-  const dpr=window.devicePixelRatio||1;c.width=c.clientWidth*dpr;c.height=c.clientHeight*dpr;
-  const g=c.getContext('2d');g.scale(dpr,dpr);
-  const w=c.clientWidth,h=c.clientHeight,cx=w/2,cy=h*.72,s=MODES[mi].scale,th=rad(heading);
-  const P=p=>{const[x,y]=toXY(p,pos);return[cx+(x*Math.cos(th)-y*Math.sin(th))*s,cy-(x*Math.sin(th)+y*Math.cos(th))*s];};
-  g.lineCap=g.lineJoin='round';
-  if(route){
-    g.strokeStyle='#9be8c8';g.lineWidth=8;g.shadowColor='rgba(155,232,200,.7)';g.shadowBlur=14;g.beginPath();
-    route.geometry.coordinates.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});
-    g.stroke();g.shadowBlur=0;
-    const n=steps[si+1];
-    if(n){const q=P(n.maneuver.location);
-      g.fillStyle='rgba(255,255,255,.25)';g.beginPath();g.arc(q[0],q[1],13,0,7);g.fill();
-      g.fillStyle='#fff';g.beginPath();g.arc(q[0],q[1],6,0,7);g.fill();}
-  }
-  g.shadowColor='rgba(255,255,255,.6)';g.shadowBlur=12;
-  g.fillStyle='#fff';g.beginPath();g.moveTo(cx,cy-16);g.lineTo(cx+11,cy+10);g.lineTo(cx-11,cy+10);g.closePath();g.fill();g.shadowBlur=0;
-}
-
-/* ---------- UI ---------- */
-$('mode').onclick=()=>{mi=(mi+1)%MODES.length;$('mode').textContent=MODES[mi].label;};
-$('go').onclick=search;
-$('gpsretry').onclick=startGPS;
-$('q').addEventListener('keydown',e=>{if(e.key==='Enter')search();});
-$('stop').onclick=()=>{route=null;steps=[];try{speechSynthesis.cancel();}catch(e){}
-  $('nav').classList.add('hide');$('setup').classList.remove('hide');$('statusrow').classList.remove('hide');
-  setStatus(pos?'GPS ready':'Waiting for GPS…');};
-addEventListener('resize',draw);
-
-startGPS();
-
-// Deep links: ?q=coffee  or  ?to=lat,lon&mode=car|foot|bike
-const qs=new URLSearchParams(location.search);
-const wantMode=MODES.findIndex(m=>m.k===qs.get('mode'));if(wantMode>=0){mi=wantMode;$('mode').textContent=MODES[mi].label;}
-if(qs.get('q')){$('q').value=qs.get('q');}
-if(qs.get('to')){const[a,b]=qs.get('to').split(',').map(Number);
-  const t=setInterval(()=>{if(pos){clearInterval(t);start([b,a]);}},500);}
-else if(qs.get('q')){const t=setInterval(()=>{if(pos){clearInterval(t);search();}},500);}
+initMap();
 </script>
 </body>
 </html>
