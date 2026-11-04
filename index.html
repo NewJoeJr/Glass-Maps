@@ -1,11 +1,16 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, interactive-widget=overlays-content">
 <meta name="description" content="Turn-by-turn driving directions for Meta Ray-Ban Display glasses">
 <meta name="mrbd-web-app-capable" content="yes">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#000000" id="themeColor">
+<script>
+try { var v = localStorage.getItem("glassnav.theme.v1");
+  var t = v === "light" || (v === "auto" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+</script>
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="application-name" content="GlassNav">
 <meta name="apple-mobile-web-app-title" content="GlassNav">
@@ -42,9 +47,42 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   :root {
-    --cy: #53e9ff; --gn: #5dff9d; --warn: #ffd166; --dim: rgba(255,255,255,.66);
+    color-scheme: dark;
+    --bg: #000; --ink: #fff; --ink-dim: rgba(255,255,255,.66); --ink-faint: rgba(255,255,255,.55); --hair: rgba(255,255,255,.12);
+    --cy: #53e9ff; --gn: #5dff9d; --warn: #ffd166; --red: #ff8f8f;
     --panel: linear-gradient(180deg, rgba(16,38,52,.93), rgba(5,16,24,.93));
     --edge: rgba(120,235,255,.30);
+    --shadow: 0 8px 26px rgba(0,0,0,.5), 0 0 28px rgba(0,229,255,.10), inset 0 1px 0 rgba(255,255,255,.14);
+    --glow: rgba(83,233,255,.8); --glow-soft: rgba(83,233,255,.45); --drop: rgba(0,0,0,.9);
+    --tile-edge: rgba(120,235,255,.26);
+    --tile-bg: radial-gradient(circle at 50% 38%, rgba(83,233,255,.24), rgba(83,233,255,.05) 72%);
+    --pill-bg: rgba(5,16,24,.82); --pill-edge: rgba(255,255,255,.12);
+    --field-bg: rgba(255,255,255,.07); --field-edge: rgba(120,235,255,.5);
+    --search-bg: radial-gradient(120% 80% at 50% 0%, rgba(0,70,92,.6), rgba(0,0,0,.92) 70%);
+    --go-bg: linear-gradient(180deg, #7df0ff, #3fd9f0); --go-ink: #03222b;
+    --car: #53e9ff; --car-edge: #fff; --halo-fill: rgba(83,233,255,.15); --halo-edge: rgba(83,233,255,.5);
+    --gn-edge: rgba(93,255,157,.8); --red-edge: rgba(255,110,110,.65);
+    --tile-filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.95) saturate(.55);
+  }
+  /* Light theme: normal bright map + light panels. (Dark stays the default for the glasses:
+     on an additive display black is see-through, so light mode is very bright there.) */
+  html[data-theme="light"] {
+    color-scheme: light;
+    --bg: #e6ebef; --ink: #0c1a22; --ink-dim: rgba(12,26,34,.68); --ink-faint: rgba(12,26,34,.56); --hair: rgba(12,26,34,.14);
+    --cy: #006f99; --gn: #0b8a4a; --warn: #a15c00; --red: #c62828;
+    --panel: linear-gradient(180deg, rgba(255,255,255,.97), rgba(238,245,249,.97));
+    --edge: rgba(0,60,90,.18);
+    --shadow: 0 6px 20px rgba(10,40,60,.22), inset 0 1px 0 #fff;
+    --glow: rgba(0,80,130,.30); --glow-soft: rgba(0,80,130,.18); --drop: rgba(0,0,0,.30);
+    --tile-edge: rgba(0,90,130,.22);
+    --tile-bg: radial-gradient(circle at 50% 38%, rgba(0,119,170,.14), rgba(0,119,170,.03) 72%);
+    --pill-bg: rgba(255,255,255,.93); --pill-edge: rgba(12,26,34,.14);
+    --field-bg: #fff; --field-edge: rgba(0,90,130,.45);
+    --search-bg: radial-gradient(120% 80% at 50% 0%, #ffffff, #dde6ec 75%);
+    --go-bg: linear-gradient(180deg, #1aa7d6, #007fb0); --go-ink: #fff;
+    --car: #1677ff; --car-edge: #fff; --halo-fill: rgba(22,119,255,.14); --halo-edge: rgba(22,119,255,.5);
+    --gn-edge: rgba(11,138,74,.7); --red-edge: rgba(198,40,40,.55);
+    --tile-filter: saturate(.9);
   }
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   /* Everything is pinned and CLIPPED (not just hidden): `overflow: hidden` boxes can still be
@@ -52,7 +90,7 @@
      whole UI and leaves it broken. `overflow: clip` cannot be scrolled at all. */
   html, body { position: fixed; inset: 0; width: 100%; height: 100%; overflow: hidden; overflow: clip; }
   body {
-    background: #000; color: #fff; overscroll-behavior: none;
+    background: var(--bg); color: var(--ink); overscroll-behavior: none;
     font-family: -apple-system, "SF Pro Display", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
@@ -67,26 +105,28 @@
      #map is an oversized square whose CENTER is pinned where the car is drawn. Turning it about
      its own centre spins the world around the car (heading-up); tilting it in #mapWrap's
      perspective gives the 3D "looking ahead" view. JS (sizeMapEl) sets size / position. */
-  #mapWrap { position: fixed; inset: 0; z-index: 1; background: #000; perspective: 650px;
+  #mapWrap { position: fixed; inset: 0; z-index: 1; background: var(--bg); perspective: 650px;
     overflow: hidden; overflow: clip; }
-  /* 3D: the far edge of the map dissolves into the dark sky (dark = see-through on glasses) */
+  /* 3D: the far edge of the map dissolves into the sky colour */
   #mapWrap.tilted {
     -webkit-mask-image: linear-gradient(to bottom, transparent 0%, transparent 15%, #000 40%);
             mask-image: linear-gradient(to bottom, transparent 0%, transparent 15%, #000 40%);
   }
-  #map { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #000;
+  #map { position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: var(--bg);
     transform-origin: 50% 50%; will-change: transform; transition: transform .9s linear; }
   #map.noanim { transition: none; }
-  .leaflet-container { background: #000; }
-  /* light tiles -> dark map: land goes near-black (= see-through on an additive display) */
-  .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.95) saturate(.55); }
+  .leaflet-container { background: var(--bg); }
+  /* dark: light tiles -> dark map (land goes near-black = see-through on an additive display) */
+  .leaflet-tile-pane { filter: var(--tile-filter); }
 
   /* car marker: a navigation arrow on screen; it lies "on the road" when the map is tilted */
   #carMark { position: fixed; left: 50%; top: 64%; width: 84px; height: 84px; margin: -42px 0 0 -42px;
     z-index: 5; display: none; pointer-events: none; perspective: 240px; }
   #carMark.show { display: block; }
   #carSvg { width: 100%; height: 100%; transition: transform .9s linear;
-    filter: drop-shadow(0 0 8px rgba(83,233,255,.8)) drop-shadow(0 2px 3px rgba(0,0,0,.9)); }
+    filter: drop-shadow(0 0 8px var(--glow)) drop-shadow(0 2px 3px var(--drop)); }
+  #carSvg .halo { fill: var(--halo-fill); stroke: var(--halo-edge); }
+  #carHead, #carDot { fill: var(--car); stroke: var(--car-edge); }
   #carMark.nohead #carHead { display: none; }
   #carMark:not(.nohead) #carDot { display: none; }
 
@@ -95,7 +135,7 @@
     background: var(--panel);
     border: 1px solid var(--edge);
     border-radius: 22px;
-    box-shadow: 0 8px 26px rgba(0,0,0,.5), 0 0 28px rgba(0,229,255,.10), inset 0 1px 0 rgba(255,255,255,.14);
+    box-shadow: var(--shadow);
   }
   @keyframes dropIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: none; } }
   @keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
@@ -108,16 +148,20 @@
   #turnCard.show { display: flex; animation: dropIn .35s ease both; }
   #arrowBox {
     flex: 0 0 auto; width: 88px; height: 88px; display: flex; align-items: center; justify-content: center;
-    border-radius: 20px; border: 1px solid rgba(120,235,255,.26);
-    background: radial-gradient(circle at 50% 38%, rgba(83,233,255,.24), rgba(83,233,255,.05) 72%);
+    border-radius: 20px; border: 1px solid var(--tile-edge); background: var(--tile-bg);
   }
-  #arrowSvg { width: 68px; height: 68px; transition: transform .35s ease; filter: drop-shadow(0 0 8px rgba(83,233,255,.75)); }
+  #arrowSvg { width: 68px; height: 68px; transition: transform .35s ease; filter: drop-shadow(0 0 8px var(--glow-soft)); }
+  #arrowMain path { fill: var(--cy); stroke: var(--cy); }
+  #arrowRound path:first-child { stroke: var(--cy); }
+  #arrowRound path:last-child { fill: var(--cy); }
+  #arrowFlag path:first-child { stroke: var(--gn); }
+  #arrowFlag path:last-child { fill: var(--gn); }
   #turnText { flex: 1 1 auto; min-width: 0; }
   #maneuverDist { font-size: clamp(32px, 8.6vmin, 50px); font-weight: 800; line-height: 1; letter-spacing: -.02em;
-    color: var(--cy); text-shadow: 0 0 16px rgba(83,233,255,.45); }
+    color: var(--cy); text-shadow: 0 0 16px var(--glow-soft); }
   #instruction { font-size: clamp(19px, 5vmin, 28px); font-weight: 700; line-height: 1.15; margin-top: 5px;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  #nextStreet { font-size: clamp(13px, 3.5vmin, 18px); color: var(--dim); margin-top: 5px;
+  #nextStreet { font-size: clamp(13px, 3.5vmin, 18px); color: var(--ink-dim); margin-top: 5px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #nextStreet:empty { display: none; }
 
@@ -127,15 +171,15 @@
   }
   #statusBar.show { display: flex; animation: riseIn .35s ease both; }
   .stat { flex: 1 1 0; text-align: center; min-width: 0; padding: 0 6px; }
-  .stat + .stat { border-left: 1px solid rgba(255,255,255,.12); }
+  .stat + .stat { border-left: 1px solid var(--hair); }
   .stat .v { font-size: clamp(20px, 5.4vmin, 29px); font-weight: 800; letter-spacing: -.01em; white-space: nowrap; }
-  .stat .l { font-size: clamp(10px, 2.6vmin, 13px); letter-spacing: .14em; color: rgba(255,255,255,.55); text-transform: uppercase; margin-top: 1px; }
+  .stat .l { font-size: clamp(10px, 2.6vmin, 13px); letter-spacing: .14em; color: var(--ink-faint); text-transform: uppercase; margin-top: 1px; }
 
   #curStreet {
     position: fixed; left: 50%; transform: translateX(-50%); bottom: 142px; z-index: 9; display: none;
     max-width: calc(100% - 28px); padding: 5px 16px; border-radius: 999px;
-    background: rgba(5,16,24,.82); border: 1px solid rgba(255,255,255,.12);
-    font-size: clamp(13px, 3.6vmin, 18px); font-weight: 600; color: rgba(255,255,255,.92);
+    background: var(--pill-bg); border: 1px solid var(--pill-edge);
+    font-size: clamp(13px, 3.6vmin, 18px); font-weight: 600; color: var(--ink);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   #curStreet.show { display: block; }
@@ -144,64 +188,70 @@
   #controls { position: fixed; left: 10px; right: 10px; bottom: 16px; z-index: 11; display: none; gap: 8px; }
   #controls.show { display: flex; animation: riseIn .35s ease both; }
   .chip {
-    flex: 1; padding: 12px 6px; text-align: center; cursor: pointer; border-radius: 18px;
-    font-size: clamp(14px, 3.8vmin, 18px); font-weight: 700; color: #fff; white-space: nowrap;
+    flex: 1; min-width: 0; padding: 12px 4px; text-align: center; cursor: pointer; border-radius: 18px;
+    font-size: clamp(13px, 3.6vmin, 18px); font-weight: 700; color: var(--ink); white-space: nowrap;
   }
-  .chip.on { border-color: rgba(93,255,157,.8); color: var(--gn); }
-  .chip.danger { border-color: rgba(255,110,110,.65); color: #ff8f8f; }
-  #attrib { position: fixed; right: 12px; bottom: 2px; z-index: 9; display: none; font-size: 9px; color: rgba(255,255,255,.45); }
+  .chip.on { border-color: var(--gn-edge); color: var(--gn); }
+  .chip.danger { border-color: var(--red-edge); color: var(--red); }
+  #attrib { position: fixed; right: 12px; bottom: 2px; z-index: 9; display: none; font-size: 9px; color: var(--ink-faint); }
   #attrib.show { display: block; }
   #banner {
     position: fixed; left: 50%; top: 42%; transform: translate(-50%,-50%); z-index: 30;
     display: none; padding: 18px 26px; text-align: center; max-width: 88%;
     font-size: clamp(18px, 5vmin, 28px); font-weight: 800; line-height: 1.2;
-    border-color: rgba(120,235,255,.55);
+    border-color: var(--field-edge);
   }
   #banner.show { display: block; }
+  #dbg { position: fixed; left: 14px; top: 118px; z-index: 40; display: none; pointer-events: none;
+    font: 600 11px/1.25 ui-monospace, Menlo, monospace; color: #ff0; text-shadow: 0 0 3px #000; white-space: pre; }
 
   /* ---------- search screen ---------- */
   #searchScreen {
     position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
     padding: 18px 16px 14px; gap: 10px; overflow: hidden; overflow: clip;
-    background: radial-gradient(120% 80% at 50% 0%, rgba(0,70,92,.6), rgba(0,0,0,.92) 70%);
+    background: var(--search-bg);
   }
   #searchScreen.hide { display: none; }
   #brand { display: flex; align-items: center; gap: 10px; flex: 0 0 auto;
     font-size: clamp(24px, 6vmin, 32px); font-weight: 800; letter-spacing: -.01em; }
   #brand span { color: var(--cy); }
-  #brand svg { width: 1.05em; height: 1.05em; filter: drop-shadow(0 0 7px rgba(83,233,255,.7)); }
+  #brand svg { width: 1.05em; height: 1.05em; filter: drop-shadow(0 0 7px var(--glow-soft)); }
+  #brand svg path { fill: var(--cy); stroke: var(--cy); }
+  #themeBtn2 { margin-left: auto; padding: 7px 16px; border-radius: 14px; cursor: pointer; color: var(--ink);
+    font-size: clamp(14px, 3.6vmin, 17px); font-weight: 700; letter-spacing: 0; }
   #searchRow { display: flex; gap: 8px; flex: 0 0 auto; }
   /* A REAL text input: on the glasses, selecting it (pinch) opens the system composer
      (handwriting / dictation / on-screen keyboard) and commits via input + change. */
   #destInput {
     flex: 1; min-width: 0; width: 100%;
-    padding: 14px 18px; font-size: clamp(17px, 4.6vmin, 22px); color: #fff;
+    padding: 14px 18px; font-size: clamp(17px, 4.6vmin, 22px); color: var(--ink);
     -webkit-user-select: text; user-select: text;
-    background: rgba(255,255,255,.07); border: 1px solid rgba(120,235,255,.5); border-radius: 18px;
+    background: var(--field-bg); border: 1px solid var(--field-edge); border-radius: 18px;
     appearance: none; -webkit-appearance: none;
   }
-  #destInput::placeholder { color: rgba(255,255,255,.55); }
+  #destInput::placeholder { color: var(--ink-faint); }
   #destInput::-webkit-search-cancel-button { display: none; }
   #goBtn {
-    padding: 0 22px; font-size: clamp(17px, 4.6vmin, 22px); font-weight: 800; color: #03222b;
-    background: linear-gradient(180deg, #7df0ff, #3fd9f0); border: none; border-radius: 18px; cursor: pointer;
-    box-shadow: 0 0 18px rgba(83,233,255,.35);
+    padding: 0 22px; font-size: clamp(17px, 4.6vmin, 22px); font-weight: 800; color: var(--go-ink);
+    background: var(--go-bg); border: none; border-radius: 18px; cursor: pointer;
+    box-shadow: 0 0 18px var(--glow-soft);
   }
   #searchMsg { color: var(--warn); font-size: clamp(14px, 3.7vmin, 18px); min-height: 1.3em; line-height: 1.3; flex: 0 0 auto;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 4px; }
   #results { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px; }
   .result {
-    position: relative; display: block; text-align: left; padding: 12px 16px 12px 56px; cursor: pointer; color: #fff;
+    position: relative; display: block; text-align: left; padding: 12px 16px 12px 56px; cursor: pointer; color: var(--ink);
     width: 100%; flex: 0 0 auto; font-size: clamp(16px, 4.3vmin, 20px); font-weight: 700; border-radius: 18px;
   }
   .result::before {
     content: ""; position: absolute; left: 16px; top: 50%; width: 26px; height: 26px; margin-top: -13px;
-    background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2353e9ff'%3E%3Cpath d='M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z'/%3E%3C/svg%3E");
-    filter: drop-shadow(0 0 5px rgba(83,233,255,.6));
+    background: var(--cy);
+    -webkit-mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z'/%3E%3C/svg%3E");
+            mask: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z'/%3E%3C/svg%3E");
   }
   .result .main, .result small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .result small { font-weight: 400; color: rgba(255,255,255,.68); margin-top: 2px; font-size: clamp(12px, 3.3vmin, 15px); }
-  .result.ghost { text-align: center; padding-left: 16px; font-weight: 600; color: rgba(255,255,255,.7); border-style: dashed; }
+  .result small { font-weight: 400; color: var(--ink-dim); margin-top: 2px; font-size: clamp(12px, 3.3vmin, 15px); }
+  .result.ghost { text-align: center; padding-left: 16px; font-weight: 600; color: var(--ink-dim); border-style: dashed; }
   .result.ghost::before { display: none; }
 
   /* visible focus ring — this is what shows the wearer where the band/touchpad selection is */
@@ -215,9 +265,10 @@
 <body>
 
 <div id="mapWrap" aria-hidden="true"><div id="map"></div></div>
+<div id="dbg"></div>
 <div id="carMark" class="nohead" aria-hidden="true">
   <svg id="carSvg" viewBox="0 0 80 80">
-    <circle cx="40" cy="40" r="36" fill="rgba(83,233,255,.15)" stroke="rgba(83,233,255,.5)" stroke-width="1.5"/>
+    <circle class="halo" cx="40" cy="40" r="36" stroke-width="1.5"/>
     <g transform="translate(13 13)">
       <path id="carHead" d="M27 4 L46 48 L27 37 L8 48 Z" fill="#53e9ff" stroke="#fff" stroke-width="3.5" stroke-linejoin="round"/>
       <circle id="carDot" cx="27" cy="27" r="11" fill="#53e9ff" stroke="#fff" stroke-width="3.5"/>
@@ -259,6 +310,7 @@
 <div id="controls">
   <button type="button" class="chip glass on" id="voiceBtn">Voice on</button>
   <button type="button" class="chip glass on" id="viewBtn">3D view</button>
+  <button type="button" class="chip glass themeBtn" id="themeBtn">Dark</button>
   <button type="button" class="chip glass hidden" id="demoBtn">Demo</button>
   <button type="button" class="chip glass danger" id="endBtn">End</button>
 </div>
@@ -267,7 +319,7 @@
 <div id="banner" class="glass" role="status" aria-live="polite"></div>
 
 <div id="searchScreen">
-  <div id="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 L20 21 L12 16.5 L4 21 Z" fill="#53e9ff" stroke="#53e9ff" stroke-width="1.5" stroke-linejoin="round"/></svg><div>Glass<span>Nav</span></div></div>
+  <div id="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 L20 21 L12 16.5 L4 21 Z" fill="#53e9ff" stroke="#53e9ff" stroke-width="1.5" stroke-linejoin="round"/></svg><div>Glass<span>Nav</span></div><button type="button" class="glass themeBtn" id="themeBtn2">Dark</button></div>
   <div id="searchRow">
     <input id="destInput" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
            placeholder="Where to? Select to write or speak" aria-label="Destination">
@@ -355,7 +407,8 @@ let demoOn = false, demoTimer = null, demoDist = 0, cumDist = [];
 let zoomTarget = 17, zoomChangedAt = 0;
 let lastInputAt = 0;
 let mapPlaced = false;              // first map placement of a trip is instant, later ones animate
-let headingSm = null, headPos = null;   // smoothed travel direction (deg from north), last point used for bearing
+let headingSm = null;               // smoothed travel direction, degrees clockwise from north
+const trail = [];                   // recent positions {p:[lat,lon], t:ms}: the car's own track gives its heading
 let viewMode = "3d";                // "3d" = heading-up + tilted look-ahead; "2d" = heading-up flat; "north" = fixed north-up
 const TILT = 52;                    // degrees of camera tilt in 3D
 let mapAngle = 0, mapAngleInit = false, carAngle = 0;
@@ -485,14 +538,18 @@ function clearRouteLayers() {
 function drawRoute() {
   if (!map) return;
   clearRouteLayers();
+  const light = document.documentElement.dataset.theme === "light";
+  const C = light
+    ? { glow: "#1677ff", glowOp: .12, edge: "#ffffff", edgeOp: .95, main: "#1677ff", dest: "#12a150", ring: "#ffffff" }
+    : { glow: "#53e9ff", glowOp: .16, edge: "#00141a", edgeOp: .9,  main: "#53e9ff", dest: "#5dff9d", ring: "#ffffff" };
   const rd = { interactive: false, lineCap: "round", lineJoin: "round" };
   const dd = [dest.lat, dest.lon];
   routeLayers = [
-    L.polyline(routeCoords, Object.assign({ color: "#53e9ff", weight: 20, opacity: .16 }, rd)),   // soft glow
-    L.polyline(routeCoords, Object.assign({ color: "#00141a", weight: 13, opacity: .9 }, rd)),    // dark edge
-    L.polyline(routeCoords, Object.assign({ color: "#53e9ff", weight: 7, opacity: 1 }, rd)),      // route
-    L.circleMarker(dd, { radius: 22, stroke: false, fillColor: "#5dff9d", fillOpacity: .18, interactive: false }),
-    L.circleMarker(dd, { radius: 10, color: "#fff", weight: 3, fillColor: "#5dff9d", fillOpacity: 1, interactive: false })
+    L.polyline(routeCoords, Object.assign({ color: C.glow, weight: 20, opacity: C.glowOp }, rd)),   // soft glow
+    L.polyline(routeCoords, Object.assign({ color: C.edge, weight: 13, opacity: C.edgeOp }, rd)),   // edge
+    L.polyline(routeCoords, Object.assign({ color: C.main, weight: 7, opacity: 1 }, rd)),           // route
+    L.circleMarker(dd, { radius: 22, stroke: false, fillColor: C.dest, fillOpacity: .18, interactive: false }),
+    L.circleMarker(dd, { radius: 10, color: C.ring, weight: 3, fillColor: C.dest, fillOpacity: 1, interactive: false })
   ];
   routeLayers.forEach(l => l.addTo(map));
 }
@@ -535,26 +592,47 @@ function layoutMap(force) {
 }
 window.addEventListener("resize", () => requestAnimationFrame(() => layoutMap(false)));
 
-// Work out which way the car is travelling: GPS heading when moving, else bearing between
-// points ~10+ m apart, else (before we have moved) the direction the route starts out.
+/* Which way is the car going?  Most reliable first:
+   1. the car's OWN TRACK: bearing from a recent fix >= ~6-25 m behind it to the newest fix,
+      accepted only if that implies real movement (>= 1.5 m/s). Works with any GPS source.
+   2. the GPS "heading" value, only if it is non-zero (many phone/glasses bridges send a stuck 0).
+   3. before the car has moved at all: the direction the route starts out. */
 function routeBearing() {
   if (routeCoords.length < 2) return null;
   const a = routeCoords[0];
   for (let i = 1; i < routeCoords.length; i++) if (haversine(a, routeCoords[i]) >= 20) return bearing(a, routeCoords[i]);
   return null;
 }
-function updateHeading(pos) {
-  const here = [pos.lat, pos.lon];
-  let h = null;
-  if (pos.heading != null && isFinite(pos.heading)) { h = pos.heading; headPos = here; }
-  else if (!headPos) headPos = here;
-  else {
-    const need = Math.max(8, Math.min(25, (pos.accuracy || 0) * 0.6));
-    if (haversine(headPos, here) >= need) { h = bearing(headPos, here); headPos = here; }
+function courseFromTrail(acc) {
+  if (trail.length < 2) return null;
+  const last = trail[trail.length - 1];
+  const need = Math.max(6, Math.min(25, (acc || 0) * 0.5));
+  for (let i = trail.length - 2; i >= 0; i--) {
+    const d = haversine(trail[i].p, last.p);
+    if (d >= need) {
+      const dt = (last.t - trail[i].t) / 1000;
+      return dt > 0 && d / dt >= 1.5 ? bearing(trail[i].p, last.p) : null;
+    }
   }
-  if (h == null && headingSm == null) h = routeBearing();
+  return null;
+}
+function updateHeading(pos) {
+  const here = [pos.lat, pos.lon], now = Date.now();
+  const lastT = trail.length ? trail[trail.length - 1] : null;
+  if (!lastT || now - lastT.t > 1500 || haversine(lastT.p, here) > 0.5) trail.push({ p: here, t: now });
+  while (trail.length > 40 || (trail.length > 2 && now - trail[0].t > 30000)) trail.shift();
+
+  let h = courseFromTrail(pos.accuracy), src = "track";
+  if (h == null && pos.heading != null && isFinite(pos.heading) && pos.heading !== 0 && (pos.speed == null || pos.speed > 2)) { h = pos.heading; src = "gps"; }
+  if (h == null && headingSm == null) { h = routeBearing(); src = "route"; }
+  if (DEBUG) {
+    const el = $("dbg"); el.style.display = "block";
+    el.textContent = "hdg " + (headingSm == null ? "--" : Math.round(headingSm)) + "  new " + (h == null ? "hold" : Math.round(h) + " " + src) +
+      "\nacc " + Math.round(pos.accuracy || 0) + "m  trail " + trail.length + "  gps " + (pos.heading == null ? "--" : Math.round(pos.heading));
+  }
   if (h == null) return;
-  headingSm = headingSm == null ? h : (headingSm + angDiff(h, headingSm) * 0.6 + 360) % 360;
+  if (headingSm == null) headingSm = h;
+  else { const diff = angDiff(h, headingSm); headingSm = (headingSm + diff * (Math.abs(diff) > 60 ? 0.85 : 0.5) + 360) % 360; }
 }
 function updateOrientation() {
   const head = headingSm != null;
@@ -1076,7 +1154,7 @@ function startNavigation(d) {
   announceStage = 0; offRouteCount = 0; gpsLost = false; nextRouteTry = 0; lastRerouteAt = 0;
   lastFixAt = 0; lastAccepted = null; rejectStreak = 0; speedSm = null; gotRealFix = false; locRetries = 0;
   zoomTarget = 17; zoomChangedAt = 0; currentPos = null;
-  mapPlaced = false; headingSm = null; headPos = null; mapAngleInit = false;
+  mapPlaced = false; headingSm = null; trail.length = 0; mapAngleInit = false;
   $("carMark").classList.remove("show"); $("carMark").classList.add("nohead");
   $("map").style.transform = ""; $("carSvg").style.transform = ""; $("mapWrap").classList.remove("tilted");
   showNavUi(true);
@@ -1118,7 +1196,7 @@ function teardown() {
   releaseWakeLock(); stopSpeech(); hideBanner();
   clearRouteLayers();
   steps = []; routeCoords = []; currentPos = null;
-  mapPlaced = false; headingSm = null; headPos = null;
+  mapPlaced = false; headingSm = null; trail.length = 0; mapAngleInit = false;
   $("carMark").classList.remove("show"); $("mapWrap").classList.remove("tilted");
   showNavUi(false);
   if (!$("results").children.length || Search.q === "") renderRecents();
@@ -1268,7 +1346,7 @@ async function startDemo() {
   {                                                 // restart from the top of the route
     const st = routeCoords[0]; let i = 0;
     while (i < steps.length - 1 && (steps[i].depart || haversine(st, steps[i].loc) < 30)) i++;
-    stepIdx = i; stepMin = Infinity; announceStage = 0; offRouteCount = 0; headPos = null;
+    stepIdx = i; stepMin = Infinity; announceStage = 0; offRouteCount = 0; trail.length = 0;
   }
   demoOn = true; demoDist = 0; arrived = false;
   $("demoBtn").classList.add("on");
@@ -1307,6 +1385,28 @@ $("viewBtn").addEventListener("click", () => {
   layoutMap(false);                                 // 3D needs a bigger map square than 2D
   updateOrientation();
 });
+
+/* ============ theme (dark / light / auto) ============ */
+const THEME_KEY = "glassnav.theme.v1", THEME_LABEL = { dark: "Dark", light: "Light", auto: "Auto" };
+let themePref = "dark";
+try { const v = localStorage.getItem(THEME_KEY); if (v === "dark" || v === "light" || v === "auto") themePref = v; } catch (e) {}
+const lightMq = window.matchMedia ? matchMedia("(prefers-color-scheme: light)") : null;
+function effectiveTheme() { return themePref === "auto" ? (lightMq && lightMq.matches ? "light" : "dark") : themePref; }
+function applyTheme() {
+  const t = effectiveTheme();
+  document.documentElement.setAttribute("data-theme", t);
+  const tc = $("themeColor"); if (tc) tc.setAttribute("content", t === "light" ? "#e6ebef" : "#000000");
+  document.querySelectorAll(".themeBtn").forEach(b => { b.textContent = THEME_LABEL[themePref]; });
+  if (map && routeLayers.length && dest) drawRoute();   // route colours follow the theme
+}
+document.querySelectorAll(".themeBtn").forEach(b => b.addEventListener("click", () => {
+  themePref = themePref === "dark" ? "light" : themePref === "light" ? "auto" : "dark";
+  try { localStorage.setItem(THEME_KEY, themePref); } catch (e) {}
+  applyTheme();
+}));
+if (lightMq) { const f = () => { if (themePref === "auto") applyTheme(); };
+  if (lightMq.addEventListener) lightMq.addEventListener("change", f); else if (lightMq.addListener) lightMq.addListener(f); }
+applyTheme();
 
 /* ============ wake lock (keep the display awake) ============ */
 async function requestWakeLock() {
