@@ -2,35 +2,41 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, interactive-widget=overlays-content">
 <meta name="description" content="Turn-by-turn driving directions for Meta Ray-Ban Display glasses">
 <meta name="mrbd-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>GlassNav — Turn-by-Turn for Glasses</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  html, body { height: 100%; }
+  /* Everything is pinned and CLIPPED (not just hidden): `overflow: hidden` boxes can still be
+     scrolled by the browser when a field gains focus or the composer opens, which shifts the
+     whole UI and leaves it broken. `overflow: clip` cannot be scrolled at all. */
+  html, body { position: fixed; inset: 0; width: 100%; height: 100%; overflow: hidden; overflow: clip; }
   body {
-    background: #000; color: #fff; overflow: hidden;
+    background: #000; color: #fff; overscroll-behavior: none;
     font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    overscroll-behavior: none;
-    /* NOTE: no `touch-action: none` here on purpose. On the glasses that line opts the
-       page into pinch-and-drag input; this app only needs arrow keys + Enter (pinch = Enter). */
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    /* no `touch-action: none` on purpose: that opts the page into pinch-and-drag input,
+       and this app only needs arrow keys + Enter (pinch = Enter) */
   }
   button, input { font-family: inherit; }
   button { appearance: none; -webkit-appearance: none; }
+  .hidden { display: none !important; }
 
   #map { position: fixed; inset: 0; background: #000; z-index: 1; }
   .leaflet-container { background: #000; }
-  .leaflet-tile-pane { filter: brightness(.8) saturate(.85); }
+  /* light tiles -> dark map: land goes near-black (= see-through on an additive display) */
+  .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.95) saturate(.55); }
 
+  /* No backdrop-filter anywhere: it is pure GPU cost on a 600x600 additive display. */
   .glass {
-    background: rgba(10, 22, 30, .55);
-    -webkit-backdrop-filter: blur(14px) saturate(150%);
-    backdrop-filter: blur(14px) saturate(150%);
-    border: 1px solid rgba(120, 235, 255, .35);
+    background: rgba(8, 22, 30, .86);
+    border: 1px solid rgba(120, 235, 255, .38);
     border-radius: 18px;
-    box-shadow: 0 0 24px rgba(0, 229, 255, .12), inset 0 1px 0 rgba(255,255,255,.15);
+    box-shadow: 0 0 22px rgba(0, 229, 255, .12), inset 0 1px 0 rgba(255,255,255,.12);
   }
 
   /* ---------- navigation HUD ---------- */
@@ -44,7 +50,7 @@
   #turnText { flex: 1 1 auto; min-width: 0; }
   #maneuverDist { font-size: clamp(30px, 8vmin, 46px); font-weight: 800; line-height: 1; color: #53e9ff; }
   #instruction { font-size: clamp(20px, 5.4vmin, 30px); font-weight: 700; line-height: 1.15; margin-top: 4px; }
-  #nextStreet { font-size: clamp(14px, 3.6vmin, 19px); color: rgba(255,255,255,.75); margin-top: 3px;
+  #nextStreet { font-size: clamp(14px, 3.6vmin, 19px); color: rgba(255,255,255,.78); margin-top: 3px;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #statusBar {
     position: fixed; left: 10px; right: 10px; bottom: 66px; z-index: 10;
@@ -54,11 +60,11 @@
   #statusBar.show { display: flex; }
   .stat { text-align: center; min-width: 0; }
   .stat .v { font-size: clamp(19px, 5vmin, 27px); font-weight: 800; }
-  .stat .l { font-size: clamp(10px, 2.6vmin, 13px); letter-spacing: .12em; color: rgba(255,255,255,.6); text-transform: uppercase; }
+  .stat .l { font-size: clamp(10px, 2.6vmin, 13px); letter-spacing: .12em; color: rgba(255,255,255,.62); text-transform: uppercase; }
   #curStreet {
     position: fixed; left: 10px; right: 10px; bottom: 136px; z-index: 9; display: none;
-    text-align: center; font-size: clamp(14px, 3.8vmin, 19px); color: rgba(255,255,255,.85);
-    text-shadow: 0 1px 6px #000;
+    text-align: center; font-size: clamp(14px, 3.8vmin, 19px); color: rgba(255,255,255,.9);
+    text-shadow: 0 1px 6px #000, 0 0 3px #000;
   }
   #curStreet.show { display: block; }
   #controls { position: fixed; left: 10px; right: 10px; bottom: 18px; z-index: 11; display: none; gap: 8px; }
@@ -68,15 +74,15 @@
     font-size: clamp(14px, 3.8vmin, 18px); font-weight: 700; color: #fff; border-radius: 14px;
   }
   .chip.on { border-color: #5dff9d; color: #5dff9d; }
-  .chip.danger { border-color: rgba(255,110,110,.6); color: #ff8f8f; }
+  .chip.danger { border-color: rgba(255,110,110,.65); color: #ff8f8f; }
   #attrib {
     position: fixed; right: 12px; bottom: 3px; z-index: 9; display: none;
-    font-size: 9px; color: rgba(255,255,255,.45);
+    font-size: 9px; color: rgba(255,255,255,.5);
   }
   #attrib.show { display: block; }
   #banner {
     position: fixed; left: 50%; top: 42%; transform: translate(-50%,-50%); z-index: 30;
-    display: none; padding: 20px 26px; text-align: center; max-width: 86%;
+    display: none; padding: 20px 26px; text-align: center; max-width: 88%;
     font-size: clamp(18px, 5vmin, 28px); font-weight: 800;
   }
   #banner.show { display: block; }
@@ -84,42 +90,42 @@
   /* ---------- search screen ---------- */
   #searchScreen {
     position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
-    padding: 22px 16px 16px; gap: 12px; overflow: hidden;
-    background: radial-gradient(120% 90% at 50% 0%, rgba(0,60,80,.55), rgba(0,0,0,.88) 70%);
+    padding: 16px 16px 14px; gap: 10px; overflow: hidden; overflow: clip;
+    background: radial-gradient(120% 90% at 50% 0%, rgba(0,60,80,.55), rgba(0,0,0,.9) 70%);
   }
   #searchScreen.hide { display: none; }
-  #searchScreen.hasResults #titleBlock, #searchScreen.hasResults #demoNote { display: none; }
-  #appTitle { font-size: clamp(30px, 8vmin, 44px); font-weight: 800; letter-spacing: .01em; }
-  #appTitle span { color: #53e9ff; }
-  #appSub { color: rgba(255,255,255,.7); font-size: clamp(14px, 3.8vmin, 18px); margin-top: 2px; }
-  #searchRow { display: flex; gap: 8px; }
+  #brand { font-size: clamp(24px, 6vmin, 32px); font-weight: 800; letter-spacing: .01em; flex: 0 0 auto; }
+  #brand span { color: #53e9ff; }
+  #searchRow { display: flex; gap: 8px; flex: 0 0 auto; }
   /* A REAL text input: on the glasses, selecting it (pinch) opens the system composer
      (handwriting / dictation / on-screen keyboard) and commits via input + change. */
   #destInput {
     flex: 1; min-width: 0; width: 100%;
-    padding: 15px 16px; font-size: clamp(17px, 4.6vmin, 22px); color: #fff;
-    background: rgba(255,255,255,.08); border: 1px solid rgba(120,235,255,.45); border-radius: 14px;
+    padding: 14px 16px; font-size: clamp(17px, 4.6vmin, 22px); color: #fff;
+    -webkit-user-select: text; user-select: text;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(120,235,255,.5); border-radius: 14px;
     appearance: none; -webkit-appearance: none;
   }
-  #destInput::placeholder { color: rgba(255,255,255,.5); }
+  #destInput::placeholder { color: rgba(255,255,255,.55); }
   #destInput::-webkit-search-cancel-button { display: none; }
   #goBtn {
     padding: 0 22px; font-size: clamp(17px, 4.6vmin, 22px); font-weight: 800; color: #03222b;
     background: #53e9ff; border: none; border-radius: 14px; cursor: pointer;
   }
-  #searchMsg { color: #ffd166; font-size: clamp(14px, 3.8vmin, 18px); min-height: 1.2em; }
-  #results { display: flex; flex-direction: column; gap: 8px; flex: 1; min-height: 0; overflow-y: auto; padding: 4px; margin: -4px; }
+  #searchMsg { color: #ffd166; font-size: clamp(14px, 3.7vmin, 18px); min-height: 1.3em; line-height: 1.3; flex: 0 0 auto;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #results { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 6px; }
   .result {
-    display: block; text-align: left; padding: 14px 16px; cursor: pointer; color: #fff; width: 100%; flex: 0 0 auto;
-    font-size: clamp(15px, 4.2vmin, 20px); font-weight: 600; border-radius: 14px;
+    display: block; text-align: left; padding: 12px 16px; cursor: pointer; color: #fff; width: 100%; flex: 0 0 auto;
+    font-size: clamp(16px, 4.3vmin, 20px); font-weight: 700; border-radius: 14px;
   }
   .result .main, .result small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .result small { font-weight: 400; color: rgba(255,255,255,.6); margin-top: 2px; font-size: clamp(12px, 3.2vmin, 15px); }
-  #demoNote { margin-top: auto; color: rgba(255,255,255,.55); font-size: clamp(12px, 3.4vmin, 15px); line-height: 1.45; }
-  @media (max-height: 760px) { #demoNote, #appSub { display: none; } }
+  .result small { font-weight: 400; color: rgba(255,255,255,.68); margin-top: 2px; font-size: clamp(12px, 3.3vmin, 15px); }
+  .result.ghost { text-align: center; font-weight: 600; color: rgba(255,255,255,.7); border-style: dashed; }
 
   /* visible focus ring — this is what shows the wearer where the band/touchpad selection is */
-  :where(button, input):focus-visible { outline: 3px solid #53e9ff; outline-offset: 3px; }
+  :where(button, input):focus-visible, #destInput:focus { outline: 3px solid #53e9ff; outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { #arrowSvg { transition: none; } }
 </style>
 </head>
 <body>
@@ -154,23 +160,20 @@
 <div id="statusBar" class="glass">
   <div class="stat"><div class="v" id="statEta">—</div><div class="l">ETA</div></div>
   <div class="stat"><div class="v" id="statLeft">—</div><div class="l">Left</div></div>
-  <div class="stat"><div class="v" id="statSpeed">—</div><div class="l">MPH</div></div>
+  <div class="stat"><div class="v" id="statSpeed">—</div><div class="l" id="speedLabel">MPH</div></div>
 </div>
 
 <div id="controls">
-  <button type="button" class="chip glass on" id="voiceBtn">🔊 Voice</button>
-  <button type="button" class="chip glass" id="demoBtn">▶ Demo</button>
-  <button type="button" class="chip glass danger" id="endBtn">✕ End</button>
+  <button type="button" class="chip glass on" id="voiceBtn">Voice on</button>
+  <button type="button" class="chip glass hidden" id="demoBtn">Demo</button>
+  <button type="button" class="chip glass danger" id="endBtn">End</button>
 </div>
 
-<div id="attrib">© OpenStreetMap contributors © CARTO</div>
+<div id="attrib">© OpenStreetMap contributors</div>
 <div id="banner" class="glass" role="status" aria-live="polite"></div>
 
 <div id="searchScreen">
-  <div id="titleBlock">
-    <div id="appTitle">Glass<span>Nav</span></div>
-    <div id="appSub">Turn-by-turn, right in your glasses</div>
-  </div>
+  <div id="brand">Glass<span>Nav</span></div>
   <div id="searchRow">
     <input id="destInput" type="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
            placeholder="Where to? Select to write or speak" aria-label="Destination">
@@ -178,36 +181,85 @@
   </div>
   <div id="searchMsg" role="status" aria-live="polite"></div>
   <div id="results"></div>
-  <div id="demoNote">
-    Select the box to write or dictate a destination, then pick a result to start navigating.
-    No location yet? Start a route anyway and hit <b>▶ Demo</b> to watch it drive the route for you.
-  </div>
 </div>
+
+<noscript><div style="position:fixed;inset:0;z-index:99;background:#000;color:#fff;padding:24px;font:20px sans-serif">GlassNav needs JavaScript.</div></noscript>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ============ config ============ */
+const CONFIG = {
+  // Map tiles. Leave blank to use OpenStreetMap's public tiles (fine for personal use / testing).
+  // For a PUBLIC release, put a (domain-restricted) MapTiler key here, or host your own tiles —
+  // OSM's volunteer-run servers do not allow heavy app use.
+  mapTilerKey: "",
+  // Optional contact email sent to Nominatim (their policy asks for one if you make many requests).
+  contactEmail: "",
+  // "Closest first" search: look this many degrees around you (~111 km per degree), widening if needed.
+  searchRadiiDeg: [0.25, 1.0],
+  maxResults: 5
+};
+const DEBUG = /[?&](debug|demo)\b/.test(location.search);   // ?debug keeps the Demo button visible
+
+/* ============ units / locale ============ */
+const REGION = (function () {
+  try {
+    const l = (navigator.languages && navigator.languages[0]) || navigator.language || "en-US";
+    const m = /[-_]([A-Za-z]{2})$/.exec(l);
+    return m ? m[1].toUpperCase() : "US";
+  } catch (e) { return "US"; }
+})();
+const LANG = (navigator.language || "en-US");
+const IMPERIAL = ["US", "GB", "LR", "MM"].indexOf(REGION) >= 0;
+const YARDS = REGION === "GB";
+function fmtDist(m) {
+  if (!isFinite(m)) return "—";
+  if (IMPERIAL) {
+    if (YARDS) { const yd = m * 1.09361; if (yd < 880) return Math.max(10, Math.round(yd / 10) * 10) + " yd"; }
+    else { const ft = m * 3.28084; if (ft < 1000) return Math.max(10, Math.round(ft / 10) * 10) + " ft"; }
+    const mi = m / 1609.34;
+    return (mi < 10 ? mi.toFixed(1) : Math.round(mi)) + " mi";
+  }
+  if (m < 1000) return Math.max(10, Math.round(m / 10) * 10) + " m";
+  const km = m / 1000;
+  return (km < 10 ? km.toFixed(1) : Math.round(km)) + " km";
+}
+function spokenDist(m) {
+  return fmtDist(m).replace(/ ft$/, " feet").replace(/ yd$/, " yards").replace(/ km$/, " kilometers")
+                   .replace(/ m$/, " meters").replace(/ mi$/, " miles");
+}
+function fmtSpeed(mps) { return IMPERIAL ? Math.round(mps * 2.23694) : Math.round(mps * 3.6); }
+function fmtClock(date) {
+  try { return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+  catch (e) { return date.getHours() + ":" + String(date.getMinutes()).padStart(2, "0"); }
+}
 
 /* ============ state ============ */
 let map = null, routeLine = null, routeCasing = null, posMarker = null, destMarker = null;
-let navigating = false, arrived = false;
-let dest = null;                    // {lat, lon, label}
-let steps = [];                     // {text, kind, deg, loc:[lat,lon], name, dist, dur}
+let navigating = false, arrived = false, navStart = 0;
+let dest = null;                    // {lat, lon, title, sub, label}
+let steps = [];                     // {text, kind, deg, loc:[lat,lon], name, dist, dur, depart}
 let stepIdx = 0, stepMin = Infinity;
-let routeCoords = [];               // [[lat,lon],...]
+let routeCoords = [];
 let routeDuration = 0, routeDistance = 0;
-let currentPos = null;              // {lat, lon, speedMph, accuracy}
-let lastKnown = null;               // last fix from anything: {lat, lon, t}
+let currentPos = null;              // {lat, lon, accuracy, speed(m/s|null)}
+let lastKnown = null;               // last fix from anything: {lat, lon, acc, t}
+let lastAccepted = null;            // last fix used for navigation: {lat, lon, t, acc, wall}
+let rejectStreak = 0, speedSm = null;
 let watchId = null, voiceOn = true;
 let announceStage = 0;              // 0 none, 1 "in X…", 2 "now"
 let offRouteCount = 0, rerouting = false, building = false;
-let nextRouteTry = 0, routeBuiltAt = 0;
+let nextRouteTry = 0, routeBuiltAt = 0, lastRerouteAt = 0;
 let wakeLock = null;
-let lastPos = null, lastPosTime = 0, lastFixAt = 0, gpsLost = false;
-let gpsTimer = null, startTimer = null;
-let lastSearched = "", inFlight = "";
+let lastFixAt = 0, gpsLost = false, gotRealFix = false;
+let gpsTimer = null, startTimer = null, locRetries = 0;
 let demoOn = false, demoTimer = null, demoDist = 0, cumDist = [];
+let zoomTarget = 17, zoomChangedAt = 0;
+let lastInputAt = 0;
 
 /* ============ geo helpers ============ */
 const R = 6371000, toRad = d => d * Math.PI / 180;
@@ -217,7 +269,7 @@ function haversine(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 function distToSegment(p, a, b) {
-  const k = Math.cos(toRad(p[0]));                 // shrink longitude so the projection is sane
+  const k = Math.cos(toRad(p[0]));
   const dx = (b[1] - a[1]) * k, dy = b[0] - a[0], L2 = dx * dx + dy * dy;
   let t = L2 ? (((p[1] - a[1]) * k) * dx + (p[0] - a[0]) * dy) / L2 : 0;
   t = Math.max(0, Math.min(1, t));
@@ -231,23 +283,16 @@ function distToRoute(p) {
   }
   return best;
 }
-function fmtDist(m) {
-  const ft = m * 3.28084;
-  if (ft < 1000) return Math.max(10, Math.round(ft / 10) * 10) + " ft";
-  return (m / 1609.34).toFixed(1) + " mi";
-}
-function spoken(s) { return s.replace(/ ft$/, " feet").replace(/ mi$/, " miles"); }
-function fmtClock(date) {
-  let h = date.getHours(); const ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
-  return h + ":" + String(date.getMinutes()).padStart(2, "0") + " " + ap;
-}
 function lowerFirst(s) { return s.charAt(0).toLowerCase() + s.slice(1); }
 function ordinal(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
 
 /* ============ speech (glasses speaker) ============ */
-let speechWarned = false;
+let speechWarned = false, lastSpoken = "", lastSpokenAt = 0;
 function speak(text) {
   if (!voiceOn || !("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+  const now = Date.now();
+  if (text === lastSpoken && now - lastSpokenAt < 4000) return;
+  lastSpoken = text; lastSpokenAt = now;
   try {
     speechSynthesis.cancel();                       // newest instruction replaces older ones
     const u = new SpeechSynthesisUtterance(text);
@@ -271,7 +316,34 @@ function showBanner(text, ms) {
 }
 function hideBanner() { clearTimeout(bannerTimer); $("banner").classList.remove("show"); }
 
+/* ============ layout safety ============
+   If the browser ever scrolls a clipped box (composer opening, focus, viewport change),
+   snap everything back so the UI can never end up offset. */
+function lockScroll() {
+  [document.documentElement, document.body, $("searchScreen")].forEach(el => {
+    if (el && el.scrollTop) el.scrollTop = 0;
+    if (el && el.scrollLeft) el.scrollLeft = 0;
+  });
+  try { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); } catch (e) {}
+}
+["scroll", "resize", "focusin", "focusout", "orientationchange"].forEach(ev =>
+  window.addEventListener(ev, () => requestAnimationFrame(lockScroll), true));
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", lockScroll);
+  window.visualViewport.addEventListener("scroll", lockScroll);
+}
+document.addEventListener("contextmenu", e => e.preventDefault());
+
+let lastErrAt = 0;
+function softError(e) {
+  try { console.error(e && (e.error || e.reason || e.message || e)); } catch (x) {}
+  if (Date.now() - lastErrAt > 10000) { lastErrAt = Date.now(); showBanner("Something hiccuped — still running", 2500); }
+}
+window.addEventListener("error", softError);
+window.addEventListener("unhandledrejection", softError);
+
 /* ============ map ============ */
+let tilesOk = 0, tilesBad = 0, tileWarned = false;
 function initMap() {
   if (map) return true;
   if (typeof L === "undefined") return false;      // Leaflet CDN blocked/offline
@@ -282,9 +354,18 @@ function initMap() {
     touchZoom: false, boxZoom: false, keyboard: false, tap: false,
     zoomSnap: 0
   });
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 19, subdomains: "abcd" }).addTo(map);
-  map.setView([42.86, -73.79], 13);
-  // keep the map out of directional navigation entirely
+  const key = CONFIG.mapTilerKey;
+  const url = key
+    ? "https://api.maptiler.com/maps/streets-v4/256/{z}/{x}/{y}.png?key=" + encodeURIComponent(key)
+    : "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
+  $("attrib").textContent = key ? "© MapTiler © OpenStreetMap contributors" : "© OpenStreetMap contributors";
+  const layer = L.tileLayer(url, { maxZoom: 19, referrerPolicy: "strict-origin-when-cross-origin", keepBuffer: 2 }).addTo(map);
+  layer.on("tileload", () => { tilesOk++; });
+  layer.on("tileerror", () => {
+    tilesBad++;
+    if (tilesBad >= 6 && tilesOk === 0 && !tileWarned) { tileWarned = true; showBanner("Map tiles unavailable — showing route only", 4000); }
+  });
+  map.setView([39.5, -98.35], 4);                  // neutral until the first fix
   map.getContainer().removeAttribute("tabindex");
   return true;
 }
@@ -297,142 +378,378 @@ function drawRoute() {
   destMarker = L.circleMarker([dest.lat, dest.lon], { radius: 10, color: "#fff", weight: 3, fillColor: "#5dff9d", fillOpacity: 1, interactive: false }).addTo(map);
 }
 
+// zoom out a little at highway speed — with hysteresis + a hold time so it never pulses
+function pickZoom(speed) {
+  const mph = (speed || 0) * 2.23694;
+  let z = zoomTarget;
+  if (zoomTarget === 17) { if (mph > 38) z = 16.3; }
+  else if (zoomTarget === 16.3) { if (mph > 58) z = 15.5; else if (mph < 30) z = 17; }
+  else if (zoomTarget === 15.5) { if (mph < 50) z = 16.3; }
+  if (z !== zoomTarget && Date.now() - zoomChangedAt > 8000) { zoomTarget = z; zoomChangedAt = Date.now(); }
+  return zoomTarget;
+}
 function moveMarker() {
   if (!map || !currentPos) return;
   const ll = [currentPos.lat, currentPos.lon];
   if (!posMarker) {
     posMarker = L.circleMarker(ll, { radius: 10, color: "#fff", weight: 3, fillColor: "#53e9ff", fillOpacity: 1, interactive: false }).addTo(map);
+    map.setView(ll, 16, { animate: false });
   } else {
     posMarker.setLatLng(ll);
   }
-  if (navigating) {
-    const mph = currentPos.speedMph || 0;           // zoom out a little at highway speed
-    const z = mph > 55 ? 15.5 : mph > 35 ? 16.3 : 17;
-    map.setView(ll, z, { animate: true, duration: .6 });
-  }
+  if (navigating) map.setView(ll, pickZoom(currentPos.speed), { animate: true, duration: .6 });
 }
 
-/* ============ fetch with timeout ============ */
-async function fetchJson(url, ms) {
-  const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), ms);
-  try {
-    const r = await fetch(url, { signal: ctl.signal, headers: { "Accept": "application/json" } });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return await r.json();
-  } finally { clearTimeout(t); }
+/* ============ fetch with timeout + retry ============ */
+async function fetchJson(url, ms, retries) {
+  let lastErr;
+  for (let i = 0; i <= (retries || 0); i++) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), ms);
+    try {
+      const r = await fetch(url, { signal: ctl.signal, headers: { "Accept": "application/json" } });
+      if (!r.ok) { const err = new Error("HTTP " + r.status); err.status = r.status; throw err; }
+      return await r.json();
+    } catch (e) {
+      lastErr = e;
+      if (i < (retries || 0)) await sleep(900);
+    } finally { clearTimeout(t); }
+  }
+  throw lastErr;
 }
 
 /* ============ location ============ */
+const GOOD_ACC = 100;                               // metres: good enough to start routing
+let locDenied = false, locPending = null;
 function rememberFix(p) {
-  lastKnown = { lat: p.coords.latitude, lon: p.coords.longitude, t: Date.now() };
+  const c = p.coords;
+  lastKnown = { lat: c.latitude, lon: c.longitude, acc: c.accuracy > 0 ? c.accuracy : 9999, t: Date.now() };
+  locDenied = false;
 }
-let warming = false;
-function warmLocation() {                           // runs from the Search tap = a clear user action
-  if (warming || !navigator.geolocation || (lastKnown && Date.now() - lastKnown.t < 120000)) return;
-  warming = true;
-  navigator.geolocation.getCurrentPosition(p => { rememberFix(p); warming = false; }, () => { warming = false; }, { timeout: 15000 });
+// Resolves {lat, lon, acc} or null. Never rejects, never waits longer than maxWaitMs.
+function ensureLocation(maxWaitMs) {
+  if (lastKnown && Date.now() - lastKnown.t < 180000 && lastKnown.acc <= 3000) return Promise.resolve(lastKnown);
+  if (!navigator.geolocation || locDenied) return Promise.resolve(null);
+  if (!locPending) {
+    locPending = new Promise(res => {
+      try {
+        navigator.geolocation.getCurrentPosition(
+          p => { rememberFix(p); res(lastKnown); },
+          err => { if (err && err.code === 1) locDenied = true; res(null); },
+          { timeout: 20000 });
+      } catch (e) { res(null); }
+    });
+    locPending.then(() => { locPending = null; });
+  }
+  return Promise.race([locPending, sleep(maxWaitMs).then(() => null)]);
 }
-function locationErrorText(err) {
-  if (err && err.code === 1) return "Location is blocked — allow location for this app";
-  if (err && err.code === 3) return "Location timed out — retrying";
-  return "Can't get your phone's location";
+// Follow the permission state so we react cleanly the moment the wearer taps Allow.
+async function watchPermission() {
+  try {
+    if (!navigator.permissions || !navigator.permissions.query) return;
+    const st = await navigator.permissions.query({ name: "geolocation" });
+    const apply = () => {
+      if (st.state === "denied") { locDenied = true; if (navigating && !steps.length) showLocationDenied(); }
+      else if (st.state === "granted") {
+        locDenied = false;
+        if (navigating) { hideBanner(); restartWatch(); }
+      }
+    };
+    apply();
+    st.onchange = apply;
+  } catch (e) { /* Permissions API not available — the error callbacks cover it */ }
+}
+function showLocationDenied() {
+  $("instruction").textContent = "Location is off";
+  $("nextStreet").textContent = "Allow location for GlassNav in the Meta AI app";
+  showBanner("Location is blocked for GlassNav. Allow it in the Meta AI app, then start again.", 8000);
+  refreshDemoBtn();
 }
 function onGpsError(err) {
-  if (!navigating || steps.length || demoOn) return;
-  $("instruction").textContent = locationErrorText(err);
-  if (err && err.code === 1) showBanner(locationErrorText(err) + ". Tap Demo to preview.", 7000);
+  if (!navigating) return;
+  if (err && err.code === 1) {                      // permission denied ends the watch
+    locDenied = true; stopWatch();
+    if (!steps.length) showLocationDenied();
+    return;
+  }
+  if (!steps.length && !demoOn) {
+    $("instruction").textContent = "Waiting for location…";
+    $("nextStreet").textContent = err && err.code === 3 ? "GPS is slow — still trying" : "Checking your phone's location";
+  }
 }
 function startWatch() {
-  if (watchId !== null || !navigator.geolocation) return;
-  watchId = navigator.geolocation.watchPosition(onGps, onGpsError, { enableHighAccuracy: true });
+  if (watchId !== null || !navigator.geolocation || locDenied) return;
+  try { watchId = navigator.geolocation.watchPosition(safeGps, onGpsError, { enableHighAccuracy: true }); }
+  catch (e) { watchId = null; }
 }
 function stopWatch() {
-  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  if (watchId !== null) { try { navigator.geolocation.clearWatch(watchId); } catch (e) {} watchId = null; }
 }
+function restartWatch() { stopWatch(); startWatch(); }
+function safeGps(p) { try { onGps(p); } catch (e) { softError(e); } }
+
+function plausible(raw, t) {                        // reject teleports (bad fixes right after permission / signal return)
+  if (!lastAccepted) return true;
+  const dt = Math.max(0.5, (t - lastAccepted.t) / 1000);
+  const d = haversine([lastAccepted.lat, lastAccepted.lon], [raw.lat, raw.lon]);
+  return d <= 70 * dt + 3 * raw.accuracy;
+}
+function acceptFix(raw, t) { lastAccepted = { lat: raw.lat, lon: raw.lon, t: t, acc: raw.accuracy, wall: Date.now() }; }
 
 function onGps(p) {
+  const c = p.coords, now = Date.now(), t = p.timestamp || now;
+  if (now - t > 90000) return;                      // stale cached fix handed back after permission
   rememberFix(p);
-  lastFixAt = Date.now();
+  lastFixAt = now;
+  if (!gotRealFix) { gotRealFix = true; refreshDemoBtn(); }
   if (gpsLost) { gpsLost = false; hideBanner(); }
-  if (demoOn) return;                               // demo drives position while active
-  const c = p.coords;
-  let mph = null;
-  if (c.speed != null && c.speed >= 0) {
-    mph = c.speed * 2.23694;
-  } else if (lastPos) {
-    const dt = (p.timestamp - lastPosTime) / 1000;
-    if (dt > 0.5 && dt < 30) {
-      mph = haversine([lastPos.lat, lastPos.lon], [c.latitude, c.longitude]) / dt * 2.23694;
-      if (mph > 160) mph = null;
+  if (demoOn || !navigating) return;
+
+  const acc = c.accuracy > 0 ? c.accuracy : 9999;
+  const raw = { lat: c.latitude, lon: c.longitude, accuracy: acc };
+
+  // 1) no route yet: wait for a decent fix (the first one after "Allow" is usually coarse)
+  if (!steps.length) {
+    currentPos = { lat: raw.lat, lon: raw.lon, accuracy: acc, speed: null };
+    moveMarker();
+    const waited = now - navStart;
+    if (acc <= GOOD_ACC || (waited > 8000 && acc <= 2000)) { acceptFix(raw, t); onPos(currentPos); }
+    else {
+      $("instruction").textContent = "Improving GPS accuracy…";
+      $("nextStreet").textContent = "Currently within about " + fmtDist(acc);
     }
+    return;
   }
-  if (mph != null && mph < 2) mph = 0;              // ignore GPS jitter while parked
-  lastPos = { lat: c.latitude, lon: c.longitude }; lastPosTime = p.timestamp;
-  onPos({ lat: c.latitude, lon: c.longitude, speedMph: mph, accuracy: c.accuracy });
+
+  // 2) route active: filter noise
+  if (acc > 300 && lastAccepted && now - lastAccepted.wall < 10000) return;
+  if (!plausible(raw, t)) { if (++rejectStreak < 3) return; }
+  rejectStreak = 0;
+  let v = null;
+  if (c.speed != null && c.speed >= 0) v = c.speed;
+  else if (lastAccepted && acc <= 100) {
+    const dt = (t - lastAccepted.t) / 1000;
+    if (dt > 0.5 && dt < 30) { v = haversine([lastAccepted.lat, lastAccepted.lon], [raw.lat, raw.lon]) / dt; if (v > 70) v = null; }
+  }
+  if (v != null) { if (v < 0.9) v = 0; speedSm = speedSm == null ? v : 0.6 * speedSm + 0.4 * v; }
+  acceptFix(raw, t);
+  onPos({ lat: raw.lat, lon: raw.lon, accuracy: acc, speed: speedSm });
 }
 
 function gpsWatchdog() {
-  if (!navigating || demoOn || !lastFixAt) return;
-  if (Date.now() - lastFixAt > 12000 && !gpsLost) {
+  if (!navigating || demoOn) return;
+  const now = Date.now();
+  if (lastFixAt && now - lastFixAt > 12000 && !gpsLost) {
     gpsLost = true;
     showBanner("Location signal lost — check your phone connection");
   }
+  // no fix at all yet: nudge the watch a few times (covers "allowed after the watch was registered")
+  if (!lastFixAt && !locDenied && now - navStart > 6000 * (locRetries + 1) && locRetries < 4) {
+    locRetries++; restartWatch();
+  }
 }
 
-/* ============ search (Nominatim) ============ */
-function setMsg(t) { $("searchMsg").textContent = t; }
-async function doSearch() {
-  const q = $("destInput").value.trim();
-  const box = $("results");
-  if (!q) { setMsg("Write or speak a destination first."); return; }
-  if (q === inFlight) return;                       // already searching this exact text
-  inFlight = q; lastSearched = q;
-  box.innerHTML = "";
-  $("searchScreen").classList.remove("hasResults");
-  setMsg("Searching…");
-  warmLocation();
-  let url = "https://nominatim.openstreetmap.org/search?format=json&limit=5&q=" + encodeURIComponent(q);
-  if (lastKnown) {                                  // prefer nearby matches
-    const d = 0.6;
-    url += "&viewbox=" + [lastKnown.lon - d, lastKnown.lat + d, lastKnown.lon + d, lastKnown.lat - d].join(",") + "&bounded=0";
-  }
+/* ============ recents (typing on glasses is slow, so remember destinations) ============ */
+const RKEY = "glassnav.recents.v1";
+function loadRecents() {
   try {
-    const data = await fetchJson(url, 10000);
-    if (q !== lastSearched) return;                 // a newer search replaced this one
-    if (!data.length) { setMsg("No matches — try a fuller address."); return; }
-    setMsg("");
-    data.forEach(item => {
-      const parts = item.display_name.split(",");
-      const lat = parseFloat(item.lat), lon = parseFloat(item.lon);
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "result glass";
-      const main = document.createElement("span");
-      main.className = "main"; main.textContent = parts[0];
-      const sm = document.createElement("small");
-      let sub = parts.slice(1, 4).join(",").trim();
-      if (lastKnown) sub = fmtDist(haversine([lastKnown.lat, lastKnown.lon], [lat, lon])) + " · " + sub;
-      sm.textContent = sub;
-      btn.append(main, sm);
-      btn.addEventListener("click", () => startNavigation({ lat: lat, lon: lon, label: item.display_name }));
-      box.appendChild(btn);
+    const a = JSON.parse(localStorage.getItem(RKEY) || "[]");
+    return Array.isArray(a) ? a.filter(r => r && isFinite(r.lat) && isFinite(r.lon) && r.title).slice(0, 4) : [];
+  } catch (e) { return []; }
+}
+function saveRecent(d) {
+  try {
+    const list = loadRecents().filter(r => !(Math.abs(r.lat - d.lat) < 1e-4 && Math.abs(r.lon - d.lon) < 1e-4));
+    list.unshift({ title: d.title, sub: d.sub || "", lat: d.lat, lon: d.lon, ts: Date.now() });
+    localStorage.setItem(RKEY, JSON.stringify(list.slice(0, 4)));
+  } catch (e) { /* storage full / blocked — not critical */ }
+}
+function clearRecents() { try { localStorage.removeItem(RKEY); } catch (e) {} renderRecents(); }
+
+/* ============ search screen ============ */
+const Search = { seq: 0, q: "", at: 0, busy: false, retry: "" };
+function setMsg(t) { $("searchMsg").textContent = t; }
+function clearResults() { $("results").textContent = ""; }
+function focusInput() { try { $("destInput").focus({ preventScroll: true }); } catch (e) {} }
+
+function makeResultButton(title, sub, onClick, extraClass) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "result glass" + (extraClass ? " " + extraClass : "");
+  const main = document.createElement("span");
+  main.className = "main"; main.textContent = title;
+  btn.appendChild(main);
+  if (sub) { const sm = document.createElement("small"); sm.textContent = sub; btn.appendChild(sm); }
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+function distLabel(lat, lon) {
+  return lastKnown ? fmtDist(haversine([lastKnown.lat, lastKnown.lon], [lat, lon])) : "";
+}
+function renderRecents() {
+  clearResults();
+  const list = loadRecents();
+  if (!list.length) { setMsg("Select the box to write or speak a destination."); return; }
+  setMsg("Recent destinations");
+  const box = $("results");
+  list.forEach(r => {
+    const d = distLabel(r.lat, r.lon);
+    box.appendChild(makeResultButton(r.title, (d ? d + " · " : "") + r.sub,
+      () => startNavigation({ lat: r.lat, lon: r.lon, title: r.title, sub: r.sub, label: r.title })));
+  });
+  box.appendChild(makeResultButton("Clear recents", "", clearRecents, "ghost"));
+}
+
+// Meta's composer keeps its own text buffer. If the field still holds old text, new dictation
+// stacks on top of it and can't be deleted. So the field is ONE-SHOT: after each search it is
+// swapped for a fresh, empty input, and the heard text is shown in the message line instead.
+function resetInput() {
+  const old = $("destInput");
+  if (!old) return;
+  if (document.activeElement === old) { old.value = ""; return; }   // never swap an element mid-edit
+  const fresh = old.cloneNode(false);
+  fresh.removeAttribute("value"); fresh.value = "";
+  old.replaceWith(fresh);
+}
+(function wireInput() {                              // delegated, so swapping the node loses nothing
+  const row = $("searchRow");
+  row.addEventListener("input", e => { if (e.target.id === "destInput") lastInputAt = Date.now(); });
+  row.addEventListener("change", e => { if (e.target.id === "destInput") runSearch(e.target.value, true); });
+  row.addEventListener("focusin", e => {
+    const el = e.target;
+    if (el.id === "destInput" && el.value && Date.now() - lastInputAt > 1500) el.value = "";   // stale text from an old session
+  });
+})();
+
+function normalizeQuery(s) {
+  s = String(s || "").replace(/\s+/g, " ").trim();
+  s = s.replace(/^(please\s+)?(navigate|directions?|take me|drive|go|bring me|find)( me)?( to| for)?\s+/i, "")
+       .replace(/^(the\s+)?(nearest|closest|nearby)\s+/i, "")
+       .replace(/\s+(near me|nearby|close by|around here)$/i, "")
+       .replace(/[.,;!?]+$/, "").trim();
+  return s.slice(0, 120);
+}
+function q2(s) { return "\u201C" + s + "\u201D"; }
+
+function viewbox(o, r) {                             // roughly square box around o, r degrees of latitude
+  const dLon = r / Math.max(0.2, Math.cos(toRad(o.lat)));
+  return [o.lon - dLon, o.lat + r, o.lon + dLon, o.lat - r].map(n => n.toFixed(5)).join(",");
+}
+let lastGeoAt = 0;
+async function geoGet(url) {                         // Nominatim policy: at most 1 request per second
+  const wait = 1100 - (Date.now() - lastGeoAt);
+  if (wait > 0) await sleep(wait);
+  lastGeoAt = Date.now();
+  return fetchJson(url, 10000, 1);
+}
+function placeTitle(it) {
+  const a = it.address || {};
+  if (it.name) return it.name;
+  if (a.road) return (a.house_number ? a.house_number + " " : "") + a.road;
+  return String(it.display_name || "").split(",")[0] || "Unnamed place";
+}
+function placeSub(it) {
+  const a = it.address || {};
+  const parts = [];
+  if (it.name && a.road) parts.push((a.house_number ? a.house_number + " " : "") + a.road);
+  const loc = a.city || a.town || a.village || a.hamlet || a.suburb || a.county;
+  if (loc) parts.push(loc);
+  if (a.state) parts.push(a.state);
+  if (parts.length) return parts.join(", ");
+  return String(it.display_name || "").split(",").slice(1, 4).join(",").trim();
+}
+
+// Returns [{title, sub, lat, lon, d}] — sorted closest-first when we know where you are.
+async function geocode(q, origin, my) {
+  const base = "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&dedupe=1" +
+    "&accept-language=" + encodeURIComponent(LANG) +
+    (CONFIG.contactEmail ? "&email=" + encodeURIComponent(CONFIG.contactEmail) : "") +
+    "&q=" + encodeURIComponent(q);
+  const seen = new Map();
+  const add = list => (list || []).forEach(it => { if (!seen.has(it.place_id)) seen.set(it.place_id, it); });
+
+  if (!origin) {
+    add(await geoGet(base + "&limit=10"));
+  } else {
+    for (const r of CONFIG.searchRadiiDeg) {         // look close first, widen only if needed
+      if (my !== Search.seq) return [];
+      add(await geoGet(base + "&limit=25&bounded=1&viewbox=" + viewbox(origin, r)));
+      if (seen.size >= 3) break;
+    }
+    if (my !== Search.seq) return [];
+    if (seen.size === 0) add(await geoGet(base + "&limit=10"));   // nothing nearby: best matches anywhere
+  }
+
+  const out = [];
+  seen.forEach(it => {
+    const lat = parseFloat(it.lat), lon = parseFloat(it.lon);
+    if (!isFinite(lat) || !isFinite(lon)) return;
+    out.push({ title: placeTitle(it), sub: placeSub(it), lat: lat, lon: lon,
+               d: origin ? haversine([origin.lat, origin.lon], [lat, lon]) : null, imp: it.importance || 0 });
+  });
+  out.sort((a, b) => origin ? (a.d - b.d) || (b.imp - a.imp) : (b.imp - a.imp));
+  // collapse near-duplicates (same name within 60 m)
+  const uniq = [];
+  out.forEach(r => { if (!uniq.some(u => u.title === r.title && haversine([u.lat, u.lon], [r.lat, r.lon]) < 60)) uniq.push(r); });
+  return uniq.slice(0, CONFIG.maxResults);
+}
+
+function focusSoon(el) {                             // never steal focus from something the wearer is using
+  setTimeout(() => {
+    const a = document.activeElement;
+    if (el && el.isConnected && (!a || a === document.body || a.id === "goBtn")) { try { el.focus({ preventScroll: true }); } catch (e) {} }
+  }, 150);
+}
+
+async function runSearch(raw, auto) {
+  const q = normalizeQuery(raw);
+  if (!q) {
+    if (auto) return;                                // composer closed with nothing typed
+    if (Search.retry) { const r = Search.retry; Search.retry = ""; return runSearch(r, false); }
+    if (Search.busy || Date.now() - Search.at < 3000) return;      // a change event just ran this search
+    setMsg("Select the box above, then write or speak a destination.");
+    focusInput();
+    return;
+  }
+  if (q === Search.q && Date.now() - Search.at < 2500) return;     // change + click fired together
+  Search.q = q; Search.at = Date.now(); Search.retry = "";
+  const my = ++Search.seq;
+  Search.busy = true;
+  resetInput();
+  clearResults();
+  try {
+    let origin = null;
+    const haveFix = lastKnown && Date.now() - lastKnown.t < 180000;
+    setMsg(haveFix ? "Searching " + q2(q) + "…" : "Finding your location… allow access if asked");
+    if (!haveFix) origin = await ensureLocation(12000); else origin = lastKnown;
+    if (my !== Search.seq) return;
+    setMsg("Searching " + q2(q) + "…");
+
+    const found = await geocode(q, origin, my);
+    if (my !== Search.seq) return;
+
+    if (!found.length) {
+      setMsg("No matches for " + q2(q) + ". Select the box to try again.");
+      focusSoon($("destInput"));
+      return;
+    }
+    setMsg(origin ? q2(q) + " · closest first" : q2(q) + " · not sorted by distance (location unavailable)");
+    const box = $("results");
+    found.forEach(r => {
+      const sub = (r.d != null ? fmtDist(r.d) + " · " : "") + r.sub;
+      box.appendChild(makeResultButton(r.title, sub,
+        () => startNavigation({ lat: r.lat, lon: r.lon, title: r.title, sub: r.sub, label: r.title + (r.sub ? ", " + r.sub : "") })));
     });
-    $("searchScreen").classList.add("hasResults");
-    box.firstElementChild.focus();
+    focusSoon(box.firstElementChild);
   } catch (e) {
-    setMsg("Search failed — check your connection and try again.");
+    if (my !== Search.seq) return;
+    Search.retry = q; Search.at = 0;
+    setMsg(e && e.status === 429 ? "Search is busy — select Search to retry." : "Search failed — check your connection, then select Search to retry.");
   } finally {
-    if (inFlight === q) inFlight = "";
+    if (my === Search.seq) Search.busy = false;
   }
 }
-$("goBtn").addEventListener("click", doSearch);
-// The glasses' composer commits text through input + change. Search automatically once
-// text is committed (only if it's new, so blur/Enter doesn't double-fire).
-$("destInput").addEventListener("change", () => {
-  const q = $("destInput").value.trim();
-  if (q && q !== lastSearched) doSearch();
-});
+$("goBtn").addEventListener("click", () => runSearch($("destInput").value, false));
 
 /* ============ routing (OSRM) ============ */
 function dirWord(mod) {
@@ -503,7 +820,7 @@ async function fetchRoute(from, to) {
   const url = "https://router.project-osrm.org/route/v1/driving/" +
     from.lon + "," + from.lat + ";" + to.lon + "," + to.lat +
     "?steps=true&geometries=geojson&overview=full&annotations=false";
-  const data = await fetchJson(url, 15000);
+  const data = await fetchJson(url, 15000, 1);
   if (!data.routes || !data.routes.length) throw new Error("no route");
   const route = data.routes[0];
   // build locally, then swap in all at once so a GPS tick never sees a half-built route
@@ -512,8 +829,8 @@ async function fetchRoute(from, to) {
   if (!newSteps.length || newSteps[newSteps.length - 1].kind !== "flag")
     newSteps.push({ text: "You have arrived", kind: "flag", deg: 0, loc: [to.lat, to.lon], name: "", dist: 0, dur: 0 });
   let idx = 0;
-  // never show "head out" as an upcoming maneuver (OSRM snaps the start to the nearest road,
-  // which can be a few dozen metres from you), and skip anything we're already standing on
+  // never show "head out" as an upcoming maneuver (OSRM snaps the start to the nearest road),
+  // and skip anything we're already standing on
   while (idx < newSteps.length - 1 &&
          (newSteps[idx].depart || haversine([from.lat, from.lon], newSteps[idx].loc) < 30)) idx++;
   routeCoords = route.geometry.coordinates.map(c => [c[1], c[0]]);
@@ -523,13 +840,13 @@ async function fetchRoute(from, to) {
   drawRoute();
 }
 
-// first spoken line after a route is built / rebuilt; also primes the "in X ft" stages
+// first spoken line after a route is built / rebuilt; also primes the "in X" stages
 function primeAnnounce(prefix) {
   const step = steps[stepIdx];
   const d = haversine([currentPos.lat, currentPos.lon], step.loc);
   announceStage = d <= 150 ? 2 : d <= 800 ? 1 : 0;
   if (step.kind === "flag") speak(prefix + "Your destination is just ahead.");
-  else speak(prefix + "In " + spoken(fmtDist(d)) + ", " + lowerFirst(step.text));
+  else speak(prefix + "In " + spokenDist(d) + ", " + lowerFirst(step.text));
 }
 
 async function buildRoute() {
@@ -552,39 +869,50 @@ function showNavUi(on) {
   ["turnCard", "statusBar", "curStreet", "controls", "attrib"].forEach(id => $(id).classList.toggle("show", on));
   $("searchScreen").classList.toggle("hide", on);
 }
+function refreshDemoBtn() {                          // Demo is a test tool: hidden once real GPS is flowing
+  $("demoBtn").classList.toggle("hidden", !(DEBUG || demoOn || !gotRealFix));
+}
 
-function startNavigation(destination) {
-  dest = destination;
+function startNavigation(d) {
+  if (navigating) return;
+  dest = d;
+  saveRecent(d);
   try { history.pushState({ screen: "nav" }, ""); } catch (e) {}   // system Back = end the trip
-  navigating = true; arrived = false;
+  navigating = true; arrived = false; navStart = Date.now();
   steps = []; routeCoords = []; stepIdx = 0; stepMin = Infinity;
-  announceStage = 0; offRouteCount = 0; gpsLost = false; nextRouteTry = 0;
-  lastFixAt = 0; lastPos = null;
+  announceStage = 0; offRouteCount = 0; gpsLost = false; nextRouteTry = 0; lastRerouteAt = 0;
+  lastFixAt = 0; lastAccepted = null; rejectStreak = 0; speedSm = null; gotRealFix = false; locRetries = 0;
+  zoomTarget = 17; zoomChangedAt = 0; currentPos = null;
   showNavUi(true);
   $("instruction").textContent = "Finding your location…";
   $("maneuverDist").textContent = "—";
-  $("nextStreet").textContent = ""; $("curStreet").textContent = "";
+  $("nextStreet").textContent = locDenied ? "" : "Allow location access if asked";
+  $("curStreet").textContent = "";
   $("statEta").textContent = "—"; $("statLeft").textContent = "—"; $("statSpeed").textContent = "—";
+  refreshDemoBtn();
   if (!initMap()) showBanner("Map couldn't load — turn-by-turn still works", 5000);
   if (map) setTimeout(() => map.invalidateSize(), 60);
   requestWakeLock();
   startWatch();
+  if (locDenied) showLocationDenied();
 
-  if (lastKnown && Date.now() - lastKnown.t < 30000) {   // recent fix from the Search tap: go now
-    currentPos = { lat: lastKnown.lat, lon: lastKnown.lon, speedMph: null };
+  // a recent, accurate fix from the search step lets us route immediately
+  if (lastKnown && Date.now() - lastKnown.t < 30000 && lastKnown.acc <= GOOD_ACC) {
+    currentPos = { lat: lastKnown.lat, lon: lastKnown.lon, accuracy: lastKnown.acc, speed: null };
+    acceptFix({ lat: lastKnown.lat, lon: lastKnown.lon, accuracy: lastKnown.acc }, lastKnown.t);
     moveMarker();
     buildRoute();
   }
   clearTimeout(startTimer);
   startTimer = setTimeout(() => {
-    if (navigating && !steps.length && !building && !demoOn) {
+    if (navigating && !steps.length && !building && !demoOn && !locDenied) {
       $("instruction").textContent = "Waiting for location…";
-      showBanner("Waiting for your phone's location. Tap Demo to preview the route.", 7000);
+      showBanner("Waiting for your phone's location.", 6000);
     }
   }, 15000);
   clearInterval(gpsTimer);
   gpsTimer = setInterval(gpsWatchdog, 2000);
-  $("voiceBtn").focus();                            // give directional navigation a harmless starting point
+  $("voiceBtn").focus({ preventScroll: true });     // give directional navigation a harmless starting point
 }
 
 function teardown() {
@@ -594,11 +922,11 @@ function teardown() {
   releaseWakeLock(); stopSpeech(); hideBanner();
   if (map) [routeCasing, routeLine, destMarker].forEach(l => l && map.removeLayer(l));
   routeCasing = routeLine = destMarker = null;
-  steps = []; routeCoords = [];
+  steps = []; routeCoords = []; currentPos = null;
   showNavUi(false);
-  setMsg("");
+  if (!$("results").children.length || Search.q === "") renderRecents();
   const first = $("results").firstElementChild;
-  (first || $("destInput")).focus();
+  try { (first || $("destInput")).focus({ preventScroll: true }); } catch (e) {}
 }
 $("endBtn").addEventListener("click", () => {
   if (history.state && history.state.screen === "nav") {
@@ -615,15 +943,14 @@ function onPos(pos) {
   currentPos = pos;
   moveMarker();
   if (!navigating) return;
-  if (!steps.length) {                              // no route yet: first fix triggers building it
+  if (!steps.length) {                              // no route yet: first good fix triggers building it
     if (!building && Date.now() >= nextRouteTry) buildRoute();
     return;
   }
   if (arrived) return;
 
   const here = [pos.lat, pos.lon];
-  const speedMps = (pos.speedMph || 0) / 2.23694;
-  const radius = Math.max(30, Math.min(80, speedMps * 3));   // bigger catch radius when fast
+  const radius = Math.max(30, Math.min(80, (pos.speed || 0) * 3));   // bigger catch radius when fast
 
   // advance past maneuvers we've reached
   let moved = false;
@@ -640,9 +967,10 @@ function onPos(pos) {
   // arrived
   if (step.kind === "flag" && dNext < Math.max(35, radius)) {
     arrived = true;
-    showBanner("🎉 You have arrived");
+    showBanner("You have arrived");
     speak("You have arrived at your destination");
     renderHud(0);
+    try { $("endBtn").focus({ preventScroll: true }); } catch (e) {}
     return;
   }
 
@@ -651,14 +979,14 @@ function onPos(pos) {
     const stage = dNext <= 150 ? 2 : dNext <= 800 ? 1 : 0;
     if (stage > announceStage) {
       announceStage = stage;
-      speak(stage === 2 ? step.text : "In " + spoken(fmtDist(dNext)) + ", " + lowerFirst(step.text));
+      speak(stage === 2 ? step.text : "In " + spokenDist(dNext) + ", " + lowerFirst(step.text));
     }
   }
 
-  // off-route → reroute (needs several consecutive bad fixes, and we must be moving)
-  if (routeCoords.length > 1 && !rerouting && !building && Date.now() - routeBuiltAt > 5000 && pos.speedMph !== 0) {
-    const limit = Math.max(50, (pos.accuracy || 0) * 1.5);
-    if (distToRoute(here) > limit) {
+  // off-route → reroute: needs several consecutive good-accuracy bad fixes, while moving, and a cooldown
+  if (routeCoords.length > 1 && !rerouting && !building && Date.now() - routeBuiltAt > 5000 &&
+      Date.now() - lastRerouteAt > 15000 && pos.accuracy <= 100 && (pos.speed == null || pos.speed > 1)) {
+    if (distToRoute(here) > Math.max(50, pos.accuracy * 1.5)) {
       if (++offRouteCount >= 4) doReroute();
     } else offRouteCount = 0;
   }
@@ -667,7 +995,7 @@ function onPos(pos) {
 }
 
 async function doReroute() {
-  rerouting = true;
+  rerouting = true; lastRerouteAt = Date.now();
   showBanner("Rerouting…");
   try {
     await fetchRoute(currentPos, dest);
@@ -676,7 +1004,6 @@ async function doReroute() {
     onPos(currentPos);
   } catch (e) {
     showBanner("Rerouting failed — check connection", 4000);
-    routeBuiltAt = Date.now();                      // wait a few seconds before trying again
   }
   rerouting = false;
   offRouteCount = 0;
@@ -693,30 +1020,30 @@ function renderHud(dNext) {
   $("arrowFlag").style.display = step.kind === "flag" ? "" : "none";
   $("arrowSvg").style.transform = step.kind === "arrow" ? "rotate(" + step.deg + "deg)" : "rotate(0deg)";
 
-  $("maneuverDist").textContent = atEnd ? "★" : fmtDist(dNext);
+  $("maneuverDist").textContent = atEnd ? "Arrived" : fmtDist(dNext);
   $("instruction").textContent = (step.kind === "flag" && !atEnd) ? "Arrive at destination" : step.text;
 
-  // what comes after this maneuver
   const after = steps[stepIdx + 1];
   $("nextStreet").textContent = !after ? ""
     : after.kind === "flag" ? "Then arrive at destination"
     : "Then " + lowerFirst(after.text);
 
-  // remaining distance/time come from OSRM's own per-step numbers (follows the real road,
-  // unlike straight lines between turn points)
+  // remaining distance/time come from OSRM's own per-step numbers (follows the real road)
   let remain = dNext, remainT = 0;
   for (let j = stepIdx; j < steps.length; j++) { remain += steps[j].dist; remainT += steps[j].dur; }
   const avg = routeDistance > 0 && routeDuration > 0 ? routeDistance / routeDuration : 12;
   remainT += dNext / avg;
-  $("statLeft").textContent = atEnd ? "0 ft" : fmtDist(remain);
+  $("statLeft").textContent = atEnd ? fmtDist(0) : fmtDist(remain);
   $("statEta").textContent = fmtClock(new Date(Date.now() + remainT * 1000));
-  $("statSpeed").textContent = currentPos && currentPos.speedMph != null ? Math.round(currentPos.speedMph) : "—";
+  $("statSpeed").textContent = currentPos && currentPos.speed != null ? fmtSpeed(currentPos.speed) : "—";
 
-  // the road you're on now = the road the PREVIOUS maneuver put you on
-  $("curStreet").textContent = stepIdx > 0 ? steps[stepIdx - 1].name : "";
+  // the road you're on now = the road the PREVIOUS maneuver put you on; warn if GPS is weak
+  const road = stepIdx > 0 ? steps[stepIdx - 1].name : "";
+  $("curStreet").textContent = currentPos && currentPos.accuracy > 150 && !demoOn
+    ? "Weak GPS signal (within about " + fmtDist(currentPos.accuracy) + ")" : road;
 }
 
-/* ============ demo mode (test-drive the route) ============ */
+/* ============ demo mode (test-drive the route; hidden once real GPS is flowing) ============ */
 function buildCumDist() {
   cumDist = [0];
   for (let i = 1; i < routeCoords.length; i++)
@@ -728,12 +1055,12 @@ function demoPointAt(d) {
   const segLen = cumDist[i] - cumDist[i - 1] || 1;
   const t = Math.min(1, Math.max(0, (d - cumDist[i - 1]) / segLen));
   const a = routeCoords[i - 1], b = routeCoords[i];
-  return { lat: a[0] + (b[0] - a[0]) * t, lon: a[1] + (b[1] - a[1]) * t, speedMph: 27, accuracy: 5 };
+  return { lat: a[0] + (b[0] - a[0]) * t, lon: a[1] + (b[1] - a[1]) * t, speed: 12, accuracy: 5 };
 }
 async function startDemo() {
-  if (demoOn || !dest) return;
+  if (demoOn || !dest || !navigating) return;
   if (!routeCoords.length) {                        // no GPS: fake a start SW of the destination
-    currentPos = { lat: dest.lat - 0.018, lon: dest.lon - 0.018, speedMph: null };
+    currentPos = { lat: dest.lat - 0.018, lon: dest.lon - 0.018, speed: null, accuracy: 5 };
     moveMarker();
     showBanner("Building demo route…");
     try { await fetchRoute(currentPos, dest); hideBanner(); }
@@ -742,7 +1069,7 @@ async function startDemo() {
   buildCumDist();
   demoOn = true; demoDist = 0; arrived = false;
   $("demoBtn").classList.add("on");
-  $("demoBtn").textContent = "■ Stop";
+  $("demoBtn").textContent = "Stop demo";
   showBanner("Demo drive started", 2000);
   const total = cumDist[cumDist.length - 1];
   demoTimer = setInterval(() => {
@@ -756,7 +1083,8 @@ function stopDemo() {
   if (demoTimer) clearInterval(demoTimer);
   demoTimer = null;
   $("demoBtn").classList.remove("on");
-  $("demoBtn").textContent = "▶ Demo";
+  $("demoBtn").textContent = "Demo";
+  refreshDemoBtn();
 }
 $("demoBtn").addEventListener("click", () => { demoOn ? stopDemo() : startDemo(); });
 
@@ -764,7 +1092,7 @@ $("demoBtn").addEventListener("click", () => { demoOn ? stopDemo() : startDemo()
 $("voiceBtn").addEventListener("click", () => {
   voiceOn = !voiceOn;
   $("voiceBtn").classList.toggle("on", voiceOn);
-  $("voiceBtn").textContent = voiceOn ? "🔊 Voice" : "🔇 Muted";
+  $("voiceBtn").textContent = voiceOn ? "Voice on" : "Muted";
   if (!voiceOn) stopSpeech();
 });
 
@@ -782,14 +1110,19 @@ function releaseWakeLock() {
   wakeLock = null;
 }
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && navigating) requestWakeLock();
+  if (document.visibilityState === "visible" && navigating) { requestWakeLock(); if (!demoOn) restartWatch(); }
 });
 
 /* ============ startup ============
    No custom key handling on purpose. The glasses deliver arrow keys + Enter and the browser
    already does spatial focus movement and activates the focused control. Selecting the
    <input> opens the system composer; selecting a <button> fires a normal click. */
-window.addEventListener("load", () => { setTimeout(() => $("destInput").focus(), 300); });
+(function boot() {
+  $("speedLabel").textContent = IMPERIAL ? "MPH" : "KM/H";
+  renderRecents();
+  watchPermission();
+  window.addEventListener("load", () => { setTimeout(focusInput, 300); });
+})();
 </script>
 </body>
 </html>
