@@ -5,32 +5,64 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Glasses Maps</title>
 <style>
-:root{color-scheme:dark;--ac:#4ade80;--mut:#9ca3af}
-*{box-sizing:border-box}
-html,body{margin:0;height:100%;background:#000;color:#fff;font:20px/1.25 system-ui,sans-serif;overflow:hidden}
-#app{height:100%;display:flex;flex-direction:column;padding:10px;gap:8px}
+:root{
+  color-scheme:dark;
+  --ac:#9be8c8;                       /* soft mint accent */
+  --txt:#fff;--mut:rgba(255,255,255,.62);
+  --glass:rgba(255,255,255,.09);--glass2:rgba(255,255,255,.15);
+  --edge:rgba(255,255,255,.18);
+  --r:26px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* Pure black = transparent on a see-through lens, so keep the page black and let glass float on it */
+html,body{margin:0;height:100%;background:#000;color:var(--txt);
+  font:500 20px/1.25 -apple-system,"SF Pro Display","Segoe UI",Roboto,system-ui,sans-serif;
+  letter-spacing:.1px;overflow:hidden}
+#app{height:100%;display:flex;flex-direction:column;padding:12px;gap:10px}
 .hide{display:none!important}
-input,button{font:inherit;color:#fff;background:#111;border:2px solid #333;border-radius:12px;padding:10px 12px}
-button:focus,input:focus{outline:3px solid var(--ac)}
-button.pri{background:var(--ac);color:#000;border-color:var(--ac);font-weight:700}
-.row{display:flex;gap:8px}.row>*{flex:1}
-#results{display:flex;flex-direction:column;gap:6px;overflow:auto}
-#results button{text-align:left;font-size:17px}
-#statusrow{display:flex;align-items:center;gap:8px}
-#status{color:var(--mut);font-size:16px;flex:1}
-#gpsretry{font-size:15px;padding:6px 10px;flex:none}
-#nav{flex:1;display:flex;flex-direction:column;gap:6px;min-height:0}
-#top{display:flex;align-items:center;gap:12px}
-#arrow{width:84px;height:84px;flex:none}
-#dist{font-size:44px;font-weight:800;color:var(--ac);line-height:1}
-#instr{font-size:22px}
-#map{flex:1;width:100%;min-height:0;border-radius:12px;background:#050505}
-#foot{display:flex;justify-content:space-between;color:var(--mut);font-size:18px}
+
+.glass{
+  background:linear-gradient(145deg,rgba(255,255,255,.14),rgba(255,255,255,.05));
+  border:1px solid var(--edge);border-radius:var(--r);
+  -webkit-backdrop-filter:blur(22px) saturate(160%);backdrop-filter:blur(22px) saturate(160%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.22),0 8px 28px rgba(0,0,0,.45);
+}
+
+input,button{font:inherit;color:var(--txt);border:1px solid var(--edge);border-radius:999px;padding:12px 18px;
+  background:var(--glass);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18);transition:background .15s,transform .1s,box-shadow .15s}
+input{width:100%;background:rgba(255,255,255,.07)}
+input::placeholder{color:var(--mut)}
+button:active{transform:scale(.97);background:var(--glass2)}
+button:focus,input:focus{outline:none;border-color:#fff;
+  box-shadow:0 0 0 2px rgba(255,255,255,.9),0 0 18px rgba(255,255,255,.35)}
+button.pri{background:rgba(255,255,255,.92);color:#000;border-color:transparent;font-weight:650}
+button.pri:active{background:#fff}
+
+#setup{padding:14px}
+.row{display:flex;gap:10px}.row>*{flex:1}
+#results{display:flex;flex-direction:column;gap:8px;overflow:auto;max-height:46vh}
+#results button{text-align:left;font-size:17px;border-radius:20px}
+
+#statusrow{display:flex;align-items:center;gap:10px;padding:8px 8px 8px 18px;border-radius:999px}
+#status{color:var(--mut);font-size:15px;line-height:1.2;flex:1}
+#gpsretry{font-size:14px;padding:8px 14px;flex:none}
+
+#nav{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
+#top{display:flex;align-items:center;gap:14px;padding:12px 18px 12px 12px}
+#arrow{width:76px;height:76px;flex:none;filter:drop-shadow(0 0 10px rgba(255,255,255,.35))}
+#dist{font-size:46px;font-weight:700;color:var(--txt);line-height:1;letter-spacing:-.5px}
+#instr{font-size:20px;color:var(--mut);margin-top:2px}
+#map{flex:1;width:100%;min-height:0;border-radius:var(--r);border:1px solid var(--edge);
+  background:radial-gradient(120% 90% at 50% 100%,rgba(255,255,255,.10),rgba(255,255,255,.02));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16)}
+#foot{display:flex;justify-content:space-between;align-items:center;color:var(--mut);font-size:17px;
+  padding:8px 8px 8px 20px;border-radius:999px}
 </style>
 </head>
 <body>
 <div id="app">
-  <div id="setup">
+  <div id="setup" class="glass">
     <input id="q" placeholder="Where to?" autocomplete="off">
     <div class="row" style="margin-top:8px">
       <button id="mode" type="button">Walk</button>
@@ -38,17 +70,17 @@ button.pri{background:var(--ac);color:#000;border-color:var(--ac);font-weight:70
     </div>
     <div id="results" style="margin-top:8px"></div>
   </div>
-  <div id="statusrow">
+  <div id="statusrow" class="glass">
     <div id="status">Waiting for GPS…</div>
     <button id="gpsretry" type="button">Retry GPS</button>
   </div>
   <div id="nav" class="hide">
-    <div id="top">
-      <svg id="arrow" viewBox="-50 -50 100 100"><g id="ag"><path d="M0-40 L28 0 H10 V38 H-10 V0 H-28Z" fill="#4ade80"/></g></svg>
+    <div id="top" class="glass">
+      <svg id="arrow" viewBox="-50 -50 100 100"><g id="ag"><path d="M0-40 L28 0 H10 V38 H-10 V0 H-28Z" fill="#fff" stroke="#fff" stroke-width="6" stroke-linejoin="round"/></g></svg>
       <div><div id="dist">–</div><div id="instr"></div></div>
     </div>
     <canvas id="map"></canvas>
-    <div id="foot"><span id="rem"></span><button id="stop" type="button">End</button></div>
+    <div id="foot" class="glass"><span id="rem"></span><button id="stop" type="button">End</button></div>
   </div>
 </div>
 <script>
@@ -94,7 +126,7 @@ function angle(s){
 
 /* ---------- GPS ---------- */
 function gpsError(e){
-  if(e&&e.code===1)setStatus('Location blocked. Allow location for this site, then tap Retry GPS.');
+  if(e&&e.code===1)setStatus('Location denied. Allow it in your browser/site settings (and Meta AI app location), then tap Retry GPS.');
   else if(e&&e.code===3)setStatus('GPS timed out. Go near a window or outside, then tap Retry GPS.');
   else setStatus('GPS unavailable ('+((e&&e.message)||'unknown')+'). Tap Retry GPS.');
 }
@@ -198,13 +230,16 @@ function draw(){
   const P=p=>{const[x,y]=toXY(p,pos);return[cx+(x*Math.cos(th)-y*Math.sin(th))*s,cy-(x*Math.sin(th)+y*Math.cos(th))*s];};
   g.lineCap=g.lineJoin='round';
   if(route){
-    g.strokeStyle='#4ade80';g.lineWidth=7;g.beginPath();
+    g.strokeStyle='#9be8c8';g.lineWidth=8;g.shadowColor='rgba(155,232,200,.7)';g.shadowBlur=14;g.beginPath();
     route.geometry.coordinates.forEach((p,i)=>{const q=P(p);i?g.lineTo(q[0],q[1]):g.moveTo(q[0],q[1]);});
-    g.stroke();
+    g.stroke();g.shadowBlur=0;
     const n=steps[si+1];
-    if(n){const q=P(n.maneuver.location);g.fillStyle='#fff';g.beginPath();g.arc(q[0],q[1],7,0,7);g.fill();}
+    if(n){const q=P(n.maneuver.location);
+      g.fillStyle='rgba(255,255,255,.25)';g.beginPath();g.arc(q[0],q[1],13,0,7);g.fill();
+      g.fillStyle='#fff';g.beginPath();g.arc(q[0],q[1],6,0,7);g.fill();}
   }
-  g.fillStyle='#fff';g.beginPath();g.moveTo(cx,cy-16);g.lineTo(cx+11,cy+10);g.lineTo(cx-11,cy+10);g.closePath();g.fill();
+  g.shadowColor='rgba(255,255,255,.6)';g.shadowBlur=12;
+  g.fillStyle='#fff';g.beginPath();g.moveTo(cx,cy-16);g.lineTo(cx+11,cy+10);g.lineTo(cx-11,cy+10);g.closePath();g.fill();g.shadowBlur=0;
 }
 
 /* ---------- UI ---------- */
