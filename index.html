@@ -91,6 +91,16 @@
   .result small { display: block; font-weight: 400; color: rgba(255,255,255,.6); margin-top: 2px;
     font-size: clamp(12px, 3.2vmin, 15px); }
   #searchMsg { color: #ffd166; font-size: clamp(14px, 3.8vmin, 18px); min-height: 1.2em; }
+  #micBtn {
+    padding: 0 18px; font-size: clamp(18px, 5vmin, 24px); color: #fff; cursor: pointer;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(120,235,255,.45); border-radius: 14px;
+    display: none;
+  }
+  #micBtn.listening { border-color: #ff8f8f; color: #ff8f8f; }
+  /* visible focus ring — matters for neural-band / keyboard navigation */
+  #destInput:focus, #goBtn:focus, #micBtn:focus, .result:focus, .chip:focus {
+    outline: 3px solid #53e9ff; outline-offset: 2px;
+  }
   #demoNote { margin-top: auto; color: rgba(255,255,255,.55); font-size: clamp(12px, 3.4vmin, 15px); line-height: 1.45; }
 </style>
 </head>
@@ -144,6 +154,7 @@
   </div>
   <div id="searchRow">
     <input id="destInput" type="text" placeholder="Where to? Address or place…" autocomplete="off">
+    <button id="micBtn" title="Speak destination">🎤</button>
     <button id="goBtn">Go</button>
   </div>
   <div id="searchMsg"></div>
@@ -363,7 +374,56 @@ function drawRoute() {
 /* ============ navigation flow ============ */
 async function startNavigation(destination) {
   dest = destination;
-  initMap();
+  /* ============ neural-band / keyboard-friendly input ============
+   The band drives focus + clicks the way a keyboard/pointer does, so the
+   search screen is fully operable without a touchscreen: arrow keys move
+   through results, Enter picks, and voice input skips typing entirely. */
+$("destInput").addEventListener("keydown", e => {
+  if (e.key === "ArrowDown") {
+    const first = $("results").querySelector(".result");
+    if (first) { e.preventDefault(); first.focus(); }
+  }
+});
+$("results").addEventListener("keydown", e => {
+  const items = Array.from($("results").querySelectorAll(".result"));
+  const i = items.indexOf(document.activeElement);
+  if (i < 0) return;
+  if (e.key === "ArrowDown" && items[i + 1]) { e.preventDefault(); items[i + 1].focus(); }
+  if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (items[i - 1]) items[i - 1].focus(); else $("destInput").focus();
+  }
+});
+// keep the search box focused-ready for the band's tap
+$("searchScreen").addEventListener("click", e => {
+  if (e.target === $("searchScreen")) $("destInput").focus();
+});
+
+/* ============ voice destination entry ============ */
+(function initVoiceSearch() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return; // browser has no speech recognition — mic button stays hidden
+  $("micBtn").style.display = "";
+  let rec = null, listening = false;
+  $("micBtn").onclick = () => {
+    if (listening) { try { rec.stop(); } catch (e) {} return; }
+    rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    rec.onstart = () => { listening = true; $("micBtn").classList.add("listening"); $("searchMsg").textContent = "Listening… say the destination"; };
+    rec.onend = () => { listening = false; $("micBtn").classList.remove("listening"); };
+    rec.onerror = () => { $("searchMsg").textContent = "Voice didn't catch that — try again."; };
+    rec.onresult = ev => {
+      const text = ev.results[0][0].transcript;
+      $("destInput").value = text;
+      $("searchMsg").textContent = "";
+      doSearch();
+    };
+    try { rec.start(); } catch (e) { $("searchMsg").textContent = "Voice isn't available here."; }
+  };
+})();
+
+initMap();
   $("searchScreen").classList.add("hide");
   $("turnCard").classList.add("show");
   $("statusBar").classList.add("show");
