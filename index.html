@@ -26,7 +26,20 @@
   button { appearance: none; -webkit-appearance: none; }
   .hidden { display: none !important; }
 
-  #map { position: fixed; inset: 0; background: #000; z-index: 1; }
+  /* The map is an oversized square pinned so ITS CENTER sits where the car is drawn on screen.
+     Rotating it about its own center = rotating the world around the car (heading-up view).
+     JS (sizeMapEl) sets width/height/left/top so no corner is ever blank at any angle. */
+  #map { position: fixed; left: 0; top: 0; width: 100%; height: 100%; background: #000; z-index: 1;
+    transform-origin: 50% 50%; will-change: transform; transition: transform .9s linear; }
+  #map.noanim { transition: none; }
+  /* car marker: a navigation arrow fixed on screen (the map turns beneath it) */
+  #carMark { position: fixed; left: 50%; top: 64%; width: 54px; height: 54px; margin: -27px 0 0 -27px;
+    z-index: 5; display: none; pointer-events: none; }
+  #carMark.show { display: block; }
+  #carSvg { width: 100%; height: 100%; transition: transform .9s linear;
+    filter: drop-shadow(0 0 7px rgba(83,233,255,.85)) drop-shadow(0 2px 3px rgba(0,0,0,.9)); }
+  #carMark.nohead #carHead { display: none; }
+  #carMark:not(.nohead) #carDot { display: none; }
   .leaflet-container { background: #000; }
   /* light tiles -> dark map: land goes near-black (= see-through on an additive display) */
   .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.85) contrast(.95) saturate(.55); }
@@ -125,12 +138,18 @@
 
   /* visible focus ring — this is what shows the wearer where the band/touchpad selection is */
   :where(button, input):focus-visible, #destInput:focus { outline: 3px solid #53e9ff; outline-offset: 2px; }
-  @media (prefers-reduced-motion: reduce) { #arrowSvg { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { #arrowSvg, #map, #carSvg { transition: none; } }
 </style>
 </head>
 <body>
 
 <div id="map" aria-hidden="true"></div>
+<div id="carMark" class="nohead" aria-hidden="true">
+  <svg id="carSvg" viewBox="0 0 54 54">
+    <path id="carHead" d="M27 4 L46 48 L27 37 L8 48 Z" fill="#53e9ff" stroke="#fff" stroke-width="3.5" stroke-linejoin="round"/>
+    <circle id="carDot" cx="27" cy="27" r="11" fill="#53e9ff" stroke="#fff" stroke-width="3.5"/>
+  </svg>
+</div>
 
 <div id="turnCard" class="glass">
   <div id="arrowBox">
@@ -165,6 +184,7 @@
 
 <div id="controls">
   <button type="button" class="chip glass on" id="voiceBtn">Voice on</button>
+  <button type="button" class="chip glass on" id="viewBtn">Heading up</button>
   <button type="button" class="chip glass hidden" id="demoBtn">Demo</button>
   <button type="button" class="chip glass danger" id="endBtn">End</button>
 </div>
@@ -239,7 +259,7 @@ function fmtClock(date) {
 }
 
 /* ============ state ============ */
-let map = null, routeLine = null, routeCasing = null, posMarker = null, destMarker = null;
+let map = null, routeLine = null, routeCasing = null, destMarker = null;
 let navigating = false, arrived = false, navStart = 0;
 let dest = null;                    // {lat, lon, title, sub, label}
 let steps = [];                     // {text, kind, deg, loc:[lat,lon], name, dist, dur, depart}
@@ -260,6 +280,11 @@ let gpsTimer = null, startTimer = null, locRetries = 0;
 let demoOn = false, demoTimer = null, demoDist = 0, cumDist = [];
 let zoomTarget = 17, zoomChangedAt = 0;
 let lastInputAt = 0;
+let mapPlaced = false;              // first map placement of a trip is instant, later ones animate
+let headingSm = null, headPos = null;   // smoothed travel direction (deg from north), last point used for bearing
+let viewMode = "head";              // "head" = map turns so travel direction is up; "north" = fixed north-up
+let mapAngle = 0, mapAngleInit = false, carAngle = 0;
+let mapKey = "";
 
 /* ============ geo helpers ============ */
 const R = 6371000, toRad = d => d * Math.PI / 180;
@@ -283,6 +308,13 @@ function distToRoute(p) {
   }
   return best;
 }
+function bearing(a, b) {                            // initial compass bearing a -> b, degrees 0..360
+  const f1 = toRad(a[0]), f2 = toRad(b[0]), dl = toRad(b[1] - a[1]);
+  const y = Math.sin(dl) * Math.cos(f2);
+  const x = Math.cos(f1) * Math.sin(f2) - Math.sin(f1) * Math.cos(f2) * Math.cos(dl);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+function angDiff(a, b) { return ((a - b + 540) % 360) - 180; }   // shortest signed a - b, in [-180, 180)
 function lowerFirst(s) { return s.charAt(0).toLowerCase() + s.slice(1); }
 function ordinal(n) { const s = ["th", "st", "nd", "rd"], v = n % 100; return n + (s[(v - 20) % 10] || s[v] || s[0]); }
 
@@ -348,6 +380,7 @@ function initMap() {
   if (map) return true;
   if (typeof L === "undefined") return false;      // Leaflet CDN blocked/offline
   // Passive backdrop only: no gesture can pan or zoom it, it follows GPS.
+  sizeMapEl();
   map = L.map("map", {
     zoomControl: false, attributionControl: false,
     dragging: false, scrollWheelZoom: false, doubleClickZoom: false,
@@ -359,7 +392,7 @@ function initMap() {
     ? "https://api.maptiler.com/maps/streets-v4/256/{z}/{x}/{y}.png?key=" + encodeURIComponent(key)
     : "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
   $("attrib").textContent = key ? "© MapTiler © OpenStreetMap contributors" : "© OpenStreetMap contributors";
-  const layer = L.tileLayer(url, { maxZoom: 19, referrerPolicy: "strict-origin-when-cross-origin", keepBuffer: 2 }).addTo(map);
+  const layer = L.tileLayer(url, { maxZoom: 19, referrerPolicy: "strict-origin-when-cross-origin", keepBuffer: 1 }).addTo(map);
   layer.on("tileload", () => { tilesOk++; });
   layer.on("tileerror", () => {
     tilesBad++;
@@ -388,16 +421,82 @@ function pickZoom(speed) {
   if (z !== zoomTarget && Date.now() - zoomChangedAt > 8000) { zoomTarget = z; zoomChangedAt = Date.now(); }
   return zoomTarget;
 }
+/* The map element is a square big enough that, rotated by ANY angle about the car's screen
+   position, it still covers the whole screen. The car sits a bit below centre (like other nav
+   apps) so there is more road visible ahead. */
+function sizeMapEl() {
+  const W = document.documentElement.clientWidth || window.innerWidth;
+  const H = document.documentElement.clientHeight || window.innerHeight;
+  const px = W / 2, py = Math.max(H * 0.5, Math.min(H * 0.64, H - 175));
+  const S = Math.ceil(2 * Math.hypot(px, Math.max(py, H - py))) + 6;
+  const key = [W, H].join("x");
+  const el = $("map");
+  el.style.width = S + "px"; el.style.height = S + "px";
+  el.style.left = Math.round(px - S / 2) + "px"; el.style.top = Math.round(py - S / 2) + "px";
+  const cm = $("carMark");
+  cm.style.left = px + "px"; cm.style.top = py + "px";
+  const changed = key !== mapKey; mapKey = key;
+  return changed;
+}
+function layoutMap(force) {
+  if (!map) return;
+  if (!sizeMapEl() && !force) return;
+  map.invalidateSize({ animate: false });
+  if (mapPlaced && currentPos) map.setView([currentPos.lat, currentPos.lon], map.getZoom(), { animate: false });
+}
+window.addEventListener("resize", () => requestAnimationFrame(() => layoutMap(false)));
+
+// Work out which way the car is travelling: GPS heading when moving, else bearing between
+// points ~10+ m apart, else (before we have moved) the direction the route starts out.
+function routeBearing() {
+  if (routeCoords.length < 2) return null;
+  const a = routeCoords[0];
+  for (let i = 1; i < routeCoords.length; i++) if (haversine(a, routeCoords[i]) >= 20) return bearing(a, routeCoords[i]);
+  return null;
+}
+function updateHeading(pos) {
+  const here = [pos.lat, pos.lon];
+  let h = null;
+  if (pos.heading != null && isFinite(pos.heading)) { h = pos.heading; headPos = here; }
+  else if (!headPos) headPos = here;
+  else {
+    const need = Math.max(8, Math.min(25, (pos.accuracy || 0) * 0.6));
+    if (haversine(headPos, here) >= need) { h = bearing(headPos, here); headPos = here; }
+  }
+  if (h == null && headingSm == null) h = routeBearing();
+  if (h == null) return;
+  headingSm = headingSm == null ? h : (headingSm + angDiff(h, headingSm) * 0.6 + 360) % 360;
+}
+function updateOrientation() {
+  const head = headingSm != null;
+  $("carMark").classList.toggle("nohead", !head);
+  if (!head) return;
+  const rot = viewMode === "head" ? -headingSm : 0;
+  const mapEl = $("map"), carSvg = $("carSvg");
+  if (!mapAngleInit) {                              // first heading of the trip: snap, don't spin
+    mapEl.classList.add("noanim"); carSvg.style.transition = "none";
+    mapAngle = rot; carAngle = headingSm + rot;
+    mapEl.style.transform = "rotate(" + mapAngle + "deg)";
+    carSvg.style.transform = "rotate(" + carAngle + "deg)";
+    void mapEl.offsetWidth;
+    mapEl.classList.remove("noanim"); carSvg.style.transition = "";
+    mapAngleInit = true;
+    return;
+  }
+  mapAngle += angDiff(rot, mapAngle);               // unwrapped, so it always turns the short way
+  carAngle += angDiff(headingSm + rot, carAngle);
+  mapEl.style.transform = "rotate(" + mapAngle + "deg)";
+  carSvg.style.transform = "rotate(" + carAngle + "deg)";
+}
 function moveMarker() {
   if (!map || !currentPos) return;
   const ll = [currentPos.lat, currentPos.lon];
-  if (!posMarker) {
-    posMarker = L.circleMarker(ll, { radius: 10, color: "#fff", weight: 3, fillColor: "#53e9ff", fillOpacity: 1, interactive: false }).addTo(map);
-    map.setView(ll, 16, { animate: false });
-  } else {
-    posMarker.setLatLng(ll);
-  }
-  if (navigating) map.setView(ll, pickZoom(currentPos.speed), { animate: true, duration: .6 });
+  $("carMark").classList.add("show");
+  const z = navigating ? pickZoom(currentPos.speed) : 16;
+  if (!mapPlaced) { map.setView(ll, z, { animate: false }); mapPlaced = true; }
+  else if (navigating) map.setView(ll, z, { animate: true, pan: { duration: .8, easeLinearity: 1 } });
+  else map.setView(ll, z, { animate: false });
+  updateOrientation();
 }
 
 /* ============ fetch with timeout + retry ============ */
@@ -533,7 +632,8 @@ function onGps(p) {
   }
   if (v != null) { if (v < 0.9) v = 0; speedSm = speedSm == null ? v : 0.6 * speedSm + 0.4 * v; }
   acceptFix(raw, t);
-  onPos({ lat: raw.lat, lon: raw.lon, accuracy: acc, speed: speedSm });
+  const gh = (c.heading != null && isFinite(c.heading) && c.speed != null && c.speed > 1.5) ? c.heading : null;
+  onPos({ lat: raw.lat, lon: raw.lon, accuracy: acc, speed: speedSm, heading: gh });
 }
 
 function gpsWatchdog() {
@@ -883,6 +983,9 @@ function startNavigation(d) {
   announceStage = 0; offRouteCount = 0; gpsLost = false; nextRouteTry = 0; lastRerouteAt = 0;
   lastFixAt = 0; lastAccepted = null; rejectStreak = 0; speedSm = null; gotRealFix = false; locRetries = 0;
   zoomTarget = 17; zoomChangedAt = 0; currentPos = null;
+  mapPlaced = false; headingSm = null; headPos = null; mapAngleInit = false;
+  $("carMark").classList.remove("show"); $("carMark").classList.add("nohead");
+  $("map").style.transform = ""; $("carSvg").style.transform = "";
   showNavUi(true);
   $("instruction").textContent = "Finding your location…";
   $("maneuverDist").textContent = "—";
@@ -891,7 +994,7 @@ function startNavigation(d) {
   $("statEta").textContent = "—"; $("statLeft").textContent = "—"; $("statSpeed").textContent = "—";
   refreshDemoBtn();
   if (!initMap()) showBanner("Map couldn't load — turn-by-turn still works", 5000);
-  if (map) setTimeout(() => map.invalidateSize(), 60);
+  if (map) { layoutMap(true); setTimeout(() => layoutMap(true), 60); }
   requestWakeLock();
   startWatch();
   if (locDenied) showLocationDenied();
@@ -923,6 +1026,8 @@ function teardown() {
   if (map) [routeCasing, routeLine, destMarker].forEach(l => l && map.removeLayer(l));
   routeCasing = routeLine = destMarker = null;
   steps = []; routeCoords = []; currentPos = null;
+  mapPlaced = false; headingSm = null; headPos = null;
+  $("carMark").classList.remove("show");
   showNavUi(false);
   if (!$("results").children.length || Search.q === "") renderRecents();
   const first = $("results").firstElementChild;
@@ -941,6 +1046,7 @@ try { history.replaceState({ screen: "search" }, ""); } catch (e) {}
 /* ============ position updates ============ */
 function onPos(pos) {
   currentPos = pos;
+  updateHeading(pos);
   moveMarker();
   if (!navigating) return;
   if (!steps.length) {                              // no route yet: first good fix triggers building it
@@ -1067,6 +1173,11 @@ async function startDemo() {
     catch (e) { showBanner("Couldn't build a demo route — check connection", 4000); return; }
   }
   buildCumDist();
+  {                                                 // restart from the top of the route
+    const st = routeCoords[0]; let i = 0;
+    while (i < steps.length - 1 && (steps[i].depart || haversine(st, steps[i].loc) < 30)) i++;
+    stepIdx = i; stepMin = Infinity; announceStage = 0; offRouteCount = 0; headPos = null;
+  }
   demoOn = true; demoDist = 0; arrived = false;
   $("demoBtn").classList.add("on");
   $("demoBtn").textContent = "Stop demo";
@@ -1094,6 +1205,13 @@ $("voiceBtn").addEventListener("click", () => {
   $("voiceBtn").classList.toggle("on", voiceOn);
   $("voiceBtn").textContent = voiceOn ? "Voice on" : "Muted";
   if (!voiceOn) stopSpeech();
+});
+
+$("viewBtn").addEventListener("click", () => {
+  viewMode = viewMode === "head" ? "north" : "head";
+  $("viewBtn").classList.toggle("on", viewMode === "head");
+  $("viewBtn").textContent = viewMode === "head" ? "Heading up" : "North up";
+  updateOrientation();
 });
 
 /* ============ wake lock (keep the display awake) ============ */
